@@ -137,6 +137,11 @@ litefxctl stop                          # Restore hardware defaults and stop lit
 
 ---
 
+
+## Discord
+
+discord server for bug reports and regular yapping: https://discord.gg/FkagyCUQSp
+
 ## 📄 License
 
 Released under the [MIT License](LICENSE).
