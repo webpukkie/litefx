@@ -1,0 +1,16 @@
+[Unit]
+Description=LiteFX Lightweight Audio DSP Daemon (PipeWire Equalizer & Crystalizer)
+After=pipewire.service wireplumber.service
+Wants=pipewire.service wireplumber.service
+PartOf=pipewire.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/litefxd
+ExecStop=/usr/local/bin/litefxctl stop
+Restart=on-failure
+RestartSec=2
+Slice=session.slice
+
+[Install]
+WantedBy=default.target

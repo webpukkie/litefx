@@ -1,0 +1,14 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=LiteFX
+GenericName=Audio DSP Equalizer & Crystalizer
+Comment=Lightweight real-time audio effects studio for PipeWire
+Exec=litefx
+TryExec=litefx
+Icon=litefx
+Terminal=false
+Categories=AudioVideo;Audio;Mixer;GTK;
+Keywords=audio;sound;dsp;equalizer;crystalizer;pipewire;easyeffects;
+StartupWMClass=litefx
+StartupNotify=true
