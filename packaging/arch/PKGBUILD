@@ -1,10 +1,10 @@
-# Maintainer: wwwebkar <https://github.com/wwwebkar/litefx>
+# Maintainer: wwwebkar <https://github.com/webpukkie/litefx>
 pkgname=litefx
 pkgver=0.3.0
 pkgrel=1
 pkgdesc="A lightweight alternative to EasyEffects and other audio processing nerd stuff (~2.5 MB daemon RAM)"
 arch=('x86_64' 'aarch64')
-url="https://github.com/wwwebkar/litefx"
+url="https://github.com/webpukkie/litefx"
 license=('MIT')
 depends=('pipewire' 'gtk3' 'zita-convolver' 'gcc-libs' 'glibc')
 makedepends=('gcc' 'pkgconf' 'make')

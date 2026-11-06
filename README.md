@@ -31,22 +31,22 @@ Monolithic audio suites keep a massive GUI toolkit resident in memory at all tim
 
 ## 📦 Packages & Installation
 
-Pre-built packages are available on the [**GitHub Releases**](https://github.com/wwwebkar/litefx/releases/latest) page, or you can install directly using your distribution's package manager:
+Pre-built packages are available on the [**GitHub Releases**](https://github.com/webpukkie/litefx/releases/latest) page, or you can install directly using your distribution's package manager:
 
 ### 1. Arch Linux (`.pkg.tar.zst` / `PKGBUILD`)
-Download `litefx-0.3.0-1-x86_64.pkg.tar.zst` from [**Releases**](https://github.com/wwwebkar/litefx/releases/latest) and install:
+Download `litefx-0.3.0-1-x86_64.pkg.tar.zst` from [**Releases**](https://github.com/webpukkie/litefx/releases/latest) and install:
 ```bash
 sudo pacman -U litefx-0.3.0-1-x86_64.pkg.tar.zst
 ```
 Or build directly from `packaging/arch/PKGBUILD`:
 ```bash
-git clone https://github.com/wwwebkar/litefx.git
+git clone https://github.com/webpukkie/litefx.git
 cd litefx/packaging/arch
 makepkg -si
 ```
 
 ### 2. Debian / Ubuntu / Mint (`.deb` Package)
-Download `litefx_0.3.0_amd64.deb` from [**Releases**](https://github.com/wwwebkar/litefx/releases/latest) and install:
+Download `litefx_0.3.0_amd64.deb` from [**Releases**](https://github.com/webpukkie/litefx/releases/latest) and install:
 ```bash
 sudo apt install ./litefx_0.3.0_amd64.deb
 ```
@@ -54,9 +54,9 @@ sudo apt install ./litefx_0.3.0_amd64.deb
 ### 3. NixOS / Nix Flakes (`flake.nix`)
 Run or install directly from the flake:
 ```bash
-nix run github:wwwebkar/litefx
+nix run github:webpukkie/litefx
 # or install to your profile:
-nix profile install github:wwwebkar/litefx
+nix profile install github:webpukkie/litefx
 ```
 
 ### 4. Portable Linux Archive (`.tar.gz`) / Build from Source
@@ -67,7 +67,7 @@ nix profile install github:wwwebkar/litefx
 
 #### Compile & Install:
 ```bash
-git clone https://github.com/wwwebkar/litefx.git
+git clone https://github.com/webpukkie/litefx.git
 cd litefx
 make test
 make install-user   # Installs to ~/.local/bin + creates Desktop shortcut & systemd user service
