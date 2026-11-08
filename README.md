@@ -34,9 +34,9 @@ Monolithic audio suites keep a massive GUI toolkit resident in memory at all tim
 Pre-built packages are available on the [**GitHub Releases**](https://github.com/webpukkie/litefx/releases/latest) page, or you can install directly using your distribution's package manager:
 
 ### 1. Arch Linux (`.pkg.tar.zst` / `PKGBUILD`)
-Download `litefx-0.3.0-1-x86_64.pkg.tar.zst` from [**Releases**](https://github.com/webpukkie/litefx/releases/latest) and install:
+Download `litefx-0.3.1-1-x86_64.pkg.tar.zst` from [**Releases**](https://github.com/webpukkie/litefx/releases/latest) and install:
 ```bash
-sudo pacman -U litefx-0.3.0-1-x86_64.pkg.tar.zst
+sudo pacman -U litefx-0.3.1-1-x86_64.pkg.tar.zst
 ```
 Or build directly from `packaging/arch/PKGBUILD`:
 ```bash
@@ -46,9 +46,9 @@ makepkg -si
 ```
 
 ### 2. Debian / Ubuntu / Mint (`.deb` Package)
-Download `litefx_0.3.0_amd64.deb` from [**Releases**](https://github.com/webpukkie/litefx/releases/latest) and install:
+Download `litefx_0.3.1_amd64.deb` from [**Releases**](https://github.com/webpukkie/litefx/releases/latest) and install:
 ```bash
-sudo apt install ./litefx_0.3.0_amd64.deb
+sudo apt install ./litefx_0.3.1_amd64.deb
 ```
 
 ### 3. NixOS / Nix Flakes (`flake.nix`)
@@ -90,6 +90,11 @@ sudo make PREFIX=/usr install
 - Use the **`🎧 Speakers`** and **`🎤 Microphone`** buttons in the top bar to switch between output and input pipelines, or click **`🌐 EN` / `🌐 UA`** to switch the interface language between English and Ukrainian.
 
 ### 2. Equalizer, Split L/R & Built-in Headphone AutoEQ Search
+
+<div align="center">
+  <img src="assets/autoeq_search.jpg" alt="Built-in AutoEQ Headphone Search & Live Spectrum Analyzer" width="760" />
+</div>
+
 - **Interactive Bode Plot:** Drag square band nodes `[1..10]` directly on the graph to adjust Frequency (`20 Hz – 20 kHz`) and Gain (`-24 dB .. +24 dB`). Use the **mouse scroll wheel** over any band node to tighten or widen its `Q` factor (`0.1 .. 20.0`), or right-click / double-click a node to reset it to `0.0 dB`.
 - **Filter Types:** Select any band and choose between `Peak / Bell`, `Low Shelf`, `High Shelf`, `Low Pass`, `High Pass`, or `Notch`.
 - **Numeric Preamp & Auto-Preamp:** Drag the Preamp slider or type an exact dB value into the numeric spinbox next to it. Enable **Auto-Preamp** to automatically prevent digital clipping.

@@ -1,6 +1,6 @@
 # Maintainer: wwwebkar <https://github.com/webpukkie/litefx>
 pkgname=litefx
-pkgver=0.3.0
+pkgver=0.3.1
 pkgrel=1
 pkgdesc="A lightweight alternative to EasyEffects and other audio processing nerd stuff (~2.5 MB daemon RAM)"
 arch=('x86_64' 'aarch64')
