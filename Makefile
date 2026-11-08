@@ -63,6 +63,7 @@ install: all
 	install -m 644 data/litefx.png $(DESTDIR)$(DATADIR)/icons/hicolor/512x512/apps/litefx.png
 	install -d $(DESTDIR)$(DATADIR)/litefx/presets
 	install -m 644 data/presets/*.conf $(DESTDIR)$(DATADIR)/litefx/presets/
+	install -m 644 data/autoeq_index.txt $(DESTDIR)$(DATADIR)/litefx/autoeq_index.txt
 	install -d $(DESTDIR)$(SYSTEMD_USER_DIR)
 	sed 's|/usr/local/bin|$(BINDIR)|g' data/litefxd.service > $(DESTDIR)$(SYSTEMD_USER_DIR)/litefxd.service
 	chmod 644 $(DESTDIR)$(SYSTEMD_USER_DIR)/litefxd.service
@@ -83,6 +84,10 @@ install-user: all
 	install -m 644 data/litefx.png $(HOME)/.local/share/icons/litefx.png
 	install -d $(HOME)/.config/litefx/presets
 	install -m 644 data/presets/*.conf $(HOME)/.config/litefx/presets/
+	install -d $(HOME)/.local/share/litefx
+	install -m 644 data/autoeq_index.txt $(HOME)/.local/share/litefx/autoeq_index.txt
+	install -d $(HOME)/.cache/litefx
+	install -m 644 data/autoeq_index.txt $(HOME)/.cache/litefx/autoeq_index.txt
 	install -d $(HOME)/.config/systemd/user
 	sed 's|/usr/local/bin|$(HOME)/.local/bin|g' data/litefxd.service > $(HOME)/.config/systemd/user/litefxd.service
 	systemctl --user daemon-reload 2>/dev/null || true

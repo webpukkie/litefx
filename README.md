@@ -89,12 +89,13 @@ sudo make PREFIX=/usr install
 - LiteFX automatically starts `litefxd` in the background if it isn't already running, creates two isolated virtual PipeWire devices (`LiteFX Sink` for speakers/headphones and `LiteFX Mic Source` for microphone), and routes your audio seamlessly.
 - Use the **`🎧 Speakers`** and **`🎤 Microphone`** buttons in the top bar to switch between output and input pipelines, or click **`🌐 EN` / `🌐 UA`** to switch the interface language between English and Ukrainian.
 
-### 2. Equalizer, Split L/R & AutoEQ Import
+### 2. Equalizer, Split L/R & Built-in Headphone AutoEQ Search
 - **Interactive Bode Plot:** Drag square band nodes `[1..10]` directly on the graph to adjust Frequency (`20 Hz – 20 kHz`) and Gain (`-24 dB .. +24 dB`). Use the **mouse scroll wheel** over any band node to tighten or widen its `Q` factor (`0.1 .. 20.0`), or right-click / double-click a node to reset it to `0.0 dB`.
 - **Filter Types:** Select any band and choose between `Peak / Bell`, `Low Shelf`, `High Shelf`, `Low Pass`, `High Pass`, or `Notch`.
 - **Numeric Preamp & Auto-Preamp:** Drag the Preamp slider or type an exact dB value into the numeric spinbox next to it. Enable **Auto-Preamp** to automatically prevent digital clipping.
 - **Independent Left/Right Channel EQ (`Split L/R`):** Check **`Split L/R`** and choose **`Left`** or **`Right`** from the dropdown to equalize each ear independently (the opposite channel is displayed as a dashed reference curve).
-- **1-Click AutoEQ Import (`📥 AutoEQ`):** Click **`📥 AutoEQ`** to import any `ParametricEQ.txt` or `GraphicEQ.txt` profile downloaded from [autoeq.app](https://autoeq.app).
+- **Built-in Headphone AutoEQ Search (`🔍 Headphone EQ`):** Click **`🔍 Headphone EQ`** directly on the EQ bar or in the Profiles tab to instantly search through 8,800+ calibrated headphone models (Sony WH-1000XM4/XM5, Sennheiser HD 600/650/560S, Apple AirPods Pro, Beyerdynamic DT 770/990, Audio-Technica ATH-M50x, Moondrop, etc.). Double-click or click **`✓ Apply EQ Curve`** to download and apply the exact parametric filters and preamp in one click—no need to manually search websites or fiddle with file formats.
+- **Local File Import:** You can still click **`📁 Import .txt`** to import custom `ParametricEQ.txt` or `GraphicEQ.txt` files from disk.
 - **Live FFT Spectrum (`Spectrum`):** Check **`Spectrum`** to display a real-time 64-band logarithmic FFT spectrum analyzer behind the EQ curve. When unchecked or when the GUI window is closed, the FFT analyzer consumes `0%` CPU.
 
 ### 3. 13-Band Linear-Phase FIR Crystalizer

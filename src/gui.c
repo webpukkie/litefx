@@ -103,6 +103,7 @@ typedef struct {
     GtkWidget   *btn_pr_save;
     GtkWidget   *btn_pr_imp;
     GtkWidget   *btn_pr_exp;
+    GtkWidget   *btn_pr_search_eq;
     GtkWidget   *btn_pr_autoeq;
     GtkWidget   *btn_pr_ee;
     GtkWidget   *btn_pr_reset;
@@ -193,6 +194,10 @@ static const char *DARK_STUDIO_CSS =
     "scrollbar slider:hover { background-color: #f8adfb; }"
     "list { background-color: #231515; border: 1px solid #4a2c2c; border-radius: 0px; }"
     "row { padding: 5px 10px; border-bottom: 1px solid #2b1c1b; border-radius: 0px; }"
+    "treeview { background-color: #1e1010; color: #f8dcdb; border: 1px solid #4a2c2c; }"
+    "treeview:selected { background-color: #f8adfb; color: #1e1010; font-weight: 700; }"
+    "treeview header button { background-color: #231515; color: #f8adfb; border: 1px solid #4a2c2c; font-weight: 700; border-radius: 0px; padding: 4px 8px; }"
+    "searchentry { background-color: #2b1c1b; color: #f8dcdb; border: 1px solid #4a2c2c; border-radius: 0px; }"
     "separator { background-color: #4a2c2c; }";
 
 static bool connect_shm(GuiApp *app) {
@@ -1500,6 +1505,452 @@ static void on_import_profile_file_clicked(GtkButton *btn, gpointer data) {
     g_object_unref(native);
 }
 
+static void on_import_autoeq_clicked(GtkButton *btn, gpointer data);
+
+/* AutoEQ Embedded & Online Database Integration */
+typedef struct {
+    char name[128];
+    char rel_path[256];
+    char source[64];
+} AutoEqEntry;
+
+typedef struct {
+    AutoEqEntry *entries;
+    uint32_t     count;
+    uint32_t     capacity;
+    bool         loaded;
+} AutoEqDb;
+
+static AutoEqDb g_autoeq_db = {0};
+
+static void autoeq_db_ensure(void) {
+    if (g_autoeq_db.loaded && g_autoeq_db.count > 0) return;
+
+    if (!g_autoeq_db.entries) {
+        g_autoeq_db.capacity = 9500;
+        g_autoeq_db.entries = (AutoEqEntry *)calloc(g_autoeq_db.capacity, sizeof(AutoEqEntry));
+        g_autoeq_db.count = 0;
+    }
+
+    const char *candidates[5] = { NULL };
+    char p_cache[512] = {0};
+    char p_data[512] = {0};
+    const char *home = getenv("HOME");
+    if (home) {
+        snprintf(p_cache, sizeof(p_cache), "%s/.cache/litefx/autoeq_index.txt", home);
+        snprintf(p_data, sizeof(p_data), "%s/.local/share/litefx/autoeq_index.txt", home);
+        candidates[0] = p_cache;
+        candidates[1] = p_data;
+    }
+    candidates[2] = "/usr/local/share/litefx/autoeq_index.txt";
+    candidates[3] = "/usr/share/litefx/autoeq_index.txt";
+    candidates[4] = "data/autoeq_index.txt";
+
+    const char *found = NULL;
+    for (size_t i = 0; i < 5; ++i) {
+        if (candidates[i] && access(candidates[i], R_OK) == 0) {
+            found = candidates[i];
+            break;
+        }
+    }
+
+    /* Auto-download to cache if not present */
+    if (!found && p_cache[0]) {
+        char dir[512];
+        snprintf(dir, sizeof(dir), "%s/.cache/litefx", home ? home : "/tmp");
+        g_mkdir_with_parents(dir, 0755);
+        char cmd[768];
+        snprintf(cmd, sizeof(cmd), "curl -sL --max-time 10 https://raw.githubusercontent.com/jaakkopasanen/AutoEq/master/results/INDEX.md -o \"%s\"", p_cache);
+        int rc = system(cmd);
+        if (rc == 0 && access(p_cache, R_OK) == 0) {
+            found = p_cache;
+        }
+    }
+
+    if (found) {
+        FILE *fp = fopen(found, "r");
+        if (fp) {
+            char line[2048];
+            while (fgets(line, sizeof(line), fp)) {
+                char *s = line;
+                while (*s == ' ' || *s == '\t') s++;
+                if (strncmp(s, "- [", 3) != 0) continue;
+                s += 3;
+                char *close_bracket = strstr(s, "](");
+                if (!close_bracket) continue;
+                *close_bracket = '\0';
+                const char *model_name = s;
+                char *path_start = close_bracket + 2;
+                char *close_paren = strchr(path_start, ')');
+                if (!close_paren) continue;
+                *close_paren = '\0';
+                const char *rel_path = path_start;
+                if (strncmp(rel_path, "./", 2) == 0) rel_path += 2;
+
+                const char *reviewer = "";
+                char *by_ptr = strstr(close_paren + 1, " by ");
+                if (by_ptr) {
+                    reviewer = by_ptr + 4;
+                } else {
+                    char *on_ptr = strstr(close_paren + 1, " on ");
+                    if (on_ptr) reviewer = on_ptr + 4;
+                }
+                while (*reviewer == ' ') reviewer++;
+
+                if (g_autoeq_db.count < g_autoeq_db.capacity) {
+                    AutoEqEntry *e = &g_autoeq_db.entries[g_autoeq_db.count++];
+                    snprintf(e->name, sizeof(e->name), "%s", model_name);
+                    snprintf(e->rel_path, sizeof(e->rel_path), "%s", rel_path);
+                    snprintf(e->source, sizeof(e->source), "%s", reviewer);
+                    char *nl = strchr(e->source, '\r');
+                    if (nl) *nl = '\0';
+                    nl = strchr(e->source, '\n');
+                    if (nl) *nl = '\0';
+                }
+            }
+            fclose(fp);
+        }
+    }
+
+    /* Popular headphones fallback list */
+    if (g_autoeq_db.count == 0) {
+        static const struct { const char *name; const char *path; const char *src; } s_pop[] = {
+            { "Sennheiser HD 600", "oratory1990/over-ear/Sennheiser%20HD%20600", "oratory1990" },
+            { "Sennheiser HD 650", "oratory1990/over-ear/Sennheiser%20HD%20650", "oratory1990" },
+            { "Sennheiser HD 560S", "oratory1990/over-ear/Sennheiser%20HD%20560S", "oratory1990" },
+            { "Sennheiser HD 800S", "oratory1990/over-ear/Sennheiser%20HD%20800S", "oratory1990" },
+            { "Sony WH-1000XM4", "oratory1990/over-ear/Sony%20WH-1000XM4", "oratory1990" },
+            { "Sony WH-1000XM5", "oratory1990/over-ear/Sony%20WH-1000XM5", "oratory1990" },
+            { "Sony WF-1000XM4", "crinacle/711%20in-ear/Sony%20WF-1000XM4", "crinacle" },
+            { "Apple AirPods Pro", "crinacle/711%20in-ear/Apple%20AirPods%20Pro", "crinacle" },
+            { "Apple AirPods Pro 2", "crinacle/711%20in-ear/Apple%20AirPods%20Pro%202%20(ANC%20mode)", "crinacle" },
+            { "Apple AirPods Max", "oratory1990/over-ear/Apple%20AirPods%20Max", "oratory1990" },
+            { "Beyerdynamic DT 770 Pro 80 Ohm", "oratory1990/over-ear/Beyerdynamic%20DT%20770%20Pro%2080%20Ohm", "oratory1990" },
+            { "Beyerdynamic DT 990 Pro 250 Ohm", "oratory1990/over-ear/Beyerdynamic%20DT%20990%20Pro%20250%20Ohm", "oratory1990" },
+            { "Audio-Technica ATH-M50x", "oratory1990/over-ear/Audio-Technica%20ATH-M50x", "oratory1990" },
+            { "Audio-Technica ATH-M40x", "oratory1990/over-ear/Audio-Technica%20ATH-M40x", "oratory1990" },
+            { "Moondrop Aria", "crinacle/711%20in-ear/Moondrop%20Aria", "crinacle" },
+            { "Moondrop Chu", "crinacle/711%20in-ear/Moondrop%20Chu", "crinacle" },
+            { "Bose QuietComfort 35 II", "oratory1990/over-ear/Bose%20QuietComfort%2035%20II", "oratory1990" },
+            { "Bose QuietComfort 45", "oratory1990/over-ear/Bose%20QuietComfort%2045", "oratory1990" },
+            { "HyperX Cloud II", "oratory1990/over-ear/HyperX%20Cloud%20II", "oratory1990" },
+            { "Samsung Galaxy Buds Pro", "crinacle/711%20in-ear/Samsung%20Galaxy%20Buds%20Pro", "crinacle" },
+            { "AKG K371", "oratory1990/over-ear/AKG%20K371", "oratory1990" },
+            { "Hifiman Sundara", "oratory1990/over-ear/Hifiman%20Sundara", "oratory1990" }
+        };
+        for (size_t i = 0; i < sizeof(s_pop)/sizeof(s_pop[0]); ++i) {
+            AutoEqEntry *e = &g_autoeq_db.entries[g_autoeq_db.count++];
+            snprintf(e->name, sizeof(e->name), "%s", s_pop[i].name);
+            snprintf(e->rel_path, sizeof(e->rel_path), "%s", s_pop[i].path);
+            snprintf(e->source, sizeof(e->source), "%s", s_pop[i].src);
+        }
+    }
+
+    g_autoeq_db.loaded = true;
+}
+
+typedef struct {
+    PipelineWin  *pw;
+    GtkWidget    *dialog;
+    GtkWidget    *search_entry;
+    GtkWidget    *tree_view;
+    GtkListStore *store;
+    GtkWidget    *lbl_status;
+    GtkWidget    *btn_apply;
+} AutoEqSearchState;
+
+static void filter_autoeq_list(AutoEqSearchState *st) {
+    autoeq_db_ensure();
+    const char *q = gtk_entry_get_text(GTK_ENTRY(st->search_entry));
+    gtk_list_store_clear(st->store);
+
+    char words[8][64];
+    int nwords = 0;
+    if (q && q[0]) {
+        char qcopy[256];
+        snprintf(qcopy, sizeof(qcopy), "%s", q);
+        char *save = NULL;
+        for (char *tok = strtok_r(qcopy, " \t\r\n", &save); tok && nwords < 8; tok = strtok_r(NULL, " \t\r\n", &save)) {
+            size_t len = strlen(tok);
+            if (len >= sizeof(words[0])) len = sizeof(words[0]) - 1;
+            for (size_t k = 0; k < len; ++k) words[nwords][k] = (char)g_ascii_tolower(tok[k]);
+            words[nwords][len] = '\0';
+            nwords++;
+        }
+    }
+
+    uint32_t matches = 0;
+    for (uint32_t i = 0; i < g_autoeq_db.count && matches < 300; ++i) {
+        const AutoEqEntry *e = &g_autoeq_db.entries[i];
+        bool ok = true;
+        if (nwords > 0) {
+            char n_low[192];
+            char s_low[96];
+            size_t nl = strlen(e->name);
+            if (nl >= sizeof(n_low)) nl = sizeof(n_low) - 1;
+            for (size_t k = 0; k < nl; ++k) n_low[k] = (char)g_ascii_tolower(e->name[k]);
+            n_low[nl] = '\0';
+
+            size_t sl = strlen(e->source);
+            if (sl >= sizeof(s_low)) sl = sizeof(s_low) - 1;
+            for (size_t k = 0; k < sl; ++k) s_low[k] = (char)g_ascii_tolower(e->source[k]);
+            s_low[sl] = '\0';
+
+            for (int w = 0; w < nwords; ++w) {
+                if (!strstr(n_low, words[w]) && !strstr(s_low, words[w])) {
+                    ok = false;
+                    break;
+                }
+            }
+        }
+
+        if (ok) {
+            GtkTreeIter iter;
+            gtk_list_store_append(st->store, &iter);
+            gtk_list_store_set(st->store, &iter,
+                               0, e->name,
+                               1, e->source,
+                               2, e->rel_path,
+                               3, (gint)i,
+                               -1);
+            matches++;
+        }
+    }
+
+    char sbuf[192];
+    GuiApp *app = st->pw->app;
+    if (matches == 0) {
+        snprintf(sbuf, sizeof(sbuf), "%s",
+                 tr(app, "No matching headphone models found", "Нічого не знайдено за цим запитом"));
+        gtk_widget_set_sensitive(st->btn_apply, FALSE);
+    } else {
+        snprintf(sbuf, sizeof(sbuf), tr(app, "Found %u models (Total database: %u)", "Знайдено %u моделей (Усього в базі: %u)"),
+                 matches, g_autoeq_db.count);
+        gtk_widget_set_sensitive(st->btn_apply, TRUE);
+
+        GtkTreeSelection *sel = gtk_tree_view_get_selection(GTK_TREE_VIEW(st->tree_view));
+        GtkTreeIter first;
+        if (gtk_tree_model_get_iter_first(GTK_TREE_MODEL(st->store), &first)) {
+            gtk_tree_selection_select_iter(sel, &first);
+        }
+    }
+    gtk_label_set_text(GTK_LABEL(st->lbl_status), sbuf);
+}
+
+static void apply_selected_autoeq(AutoEqSearchState *st) {
+    GtkTreeSelection *sel = gtk_tree_view_get_selection(GTK_TREE_VIEW(st->tree_view));
+    GtkTreeModel *model = NULL;
+    GtkTreeIter iter;
+    if (!gtk_tree_selection_get_selected(sel, &model, &iter)) return;
+
+    char *m_name = NULL;
+    char *rel_path = NULL;
+    gtk_tree_model_get(model, &iter, 0, &m_name, 2, &rel_path, -1);
+    if (!rel_path || !rel_path[0]) {
+        g_free(m_name);
+        g_free(rel_path);
+        return;
+    }
+
+    GuiApp *app = st->pw->app;
+    gtk_label_set_text(GTK_LABEL(st->lbl_status),
+                       tr(app, "Downloading EQ profile from AutoEQ GitHub...",
+                               "Завантаження профілю еквалайзера з AutoEQ..."));
+    while (gtk_events_pending()) gtk_main_iteration();
+
+    const char *slash = strrchr(rel_path, '/');
+    const char *folder = slash ? (slash + 1) : rel_path;
+
+    const char *home = getenv("HOME");
+    char cache_file[512];
+    snprintf(cache_file, sizeof(cache_file), "%s/.cache/litefx/autoeq_current.txt", home ? home : "/tmp");
+    g_mkdir_with_parents(g_path_get_dirname(cache_file), 0755);
+
+    char url[1024];
+    snprintf(url, sizeof(url), "https://raw.githubusercontent.com/jaakkopasanen/AutoEq/master/results/%s/%s%%20ParametricEQ.txt",
+             rel_path, folder);
+
+    char cmd[2048];
+    snprintf(cmd, sizeof(cmd), "curl -sL --max-time 8 \"%s\" -o \"%s\"", url, cache_file);
+    int rc = system(cmd);
+
+    FILE *chk = fopen(cache_file, "r");
+    long fsize = 0;
+    if (chk) {
+        fseek(chk, 0, SEEK_END);
+        fsize = ftell(chk);
+        fclose(chk);
+    }
+
+    if (rc != 0 || fsize < 30) {
+        snprintf(url, sizeof(url), "https://raw.githubusercontent.com/jaakkopasanen/AutoEq/master/results/%s/%s%%20GraphicEQ.txt",
+                 rel_path, folder);
+        snprintf(cmd, sizeof(cmd), "curl -sL --max-time 8 \"%s\" -o \"%s\"", url, cache_file);
+        rc = system(cmd);
+    }
+
+    char msg[256] = {0};
+    if (litefx_config_import_autoeq(&app->cfg, cache_file, st->pw->is_microphone, msg, sizeof(msg))) {
+        refresh_window_ui(&app->win_sink);
+        refresh_window_ui(&app->win_source);
+        push_config_live(app, true);
+
+        char toast[512];
+        snprintf(toast, sizeof(toast), "✓ %s: %s (%s)",
+                 tr(app, "Applied AutoEQ", "Застосовано AutoEQ"), m_name ? m_name : "Profile", msg);
+        if (st->pw->lbl_status) gtk_label_set_text(GTK_LABEL(st->pw->lbl_status), toast);
+
+        gtk_widget_destroy(st->dialog);
+    } else {
+        gtk_label_set_text(GTK_LABEL(st->lbl_status),
+                           tr(app, "Error: Could not download or parse profile. Check internet.",
+                                   "Помилка: не вдалося завантажити профіль. Перевірте інтернет."));
+    }
+
+    g_free(m_name);
+    g_free(rel_path);
+}
+
+static void on_autoeq_search_entry_changed(GtkSearchEntry *entry, gpointer data) {
+    (void)entry;
+    AutoEqSearchState *st = (AutoEqSearchState *)data;
+    filter_autoeq_list(st);
+}
+
+static void on_autoeq_tree_row_activated(GtkTreeView *tree, GtkTreePath *path, GtkTreeViewColumn *col, gpointer data) {
+    (void)tree; (void)path; (void)col;
+    AutoEqSearchState *st = (AutoEqSearchState *)data;
+    apply_selected_autoeq(st);
+}
+
+static void on_autoeq_apply_btn_clicked(GtkButton *btn, gpointer data) {
+    (void)btn;
+    AutoEqSearchState *st = (AutoEqSearchState *)data;
+    apply_selected_autoeq(st);
+}
+
+static void on_autoeq_browse_btn_clicked(GtkButton *btn, gpointer data) {
+    (void)btn;
+    AutoEqSearchState *st = (AutoEqSearchState *)data;
+    PipelineWin *pw = st->pw;
+    gtk_widget_destroy(st->dialog);
+    on_import_autoeq_clicked(NULL, pw);
+}
+
+static void on_autoeq_update_db_clicked(GtkButton *btn, gpointer data) {
+    (void)btn;
+    AutoEqSearchState *st = (AutoEqSearchState *)data;
+    const char *home = getenv("HOME");
+    if (home) {
+        char p_cache[512];
+        snprintf(p_cache, sizeof(p_cache), "%s/.cache/litefx/autoeq_index.txt", home);
+        unlink(p_cache);
+    }
+    g_autoeq_db.loaded = false;
+    g_autoeq_db.count = 0;
+    autoeq_db_ensure();
+    filter_autoeq_list(st);
+}
+
+static void show_autoeq_search_dialog(PipelineWin *pw) {
+    GuiApp *app = pw->app;
+    autoeq_db_ensure();
+
+    AutoEqSearchState *st = g_new0(AutoEqSearchState, 1);
+    st->pw = pw;
+
+    st->dialog = gtk_dialog_new();
+    gtk_window_set_title(GTK_WINDOW(st->dialog),
+                         tr(app, "🔍 AutoEQ Database (8,800+ Headphone Equalizers)",
+                                 "🔍 База еквалайзерів AutoEQ (8,800+ моделей навушників)"));
+    gtk_window_set_transient_for(GTK_WINDOW(st->dialog), GTK_WINDOW(pw->window));
+    gtk_window_set_modal(GTK_WINDOW(st->dialog), TRUE);
+    gtk_window_set_default_size(GTK_WINDOW(st->dialog), 760, 520);
+    gtk_window_set_position(GTK_WINDOW(st->dialog), GTK_WIN_POS_CENTER_ON_PARENT);
+
+    GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(st->dialog));
+    gtk_container_set_border_width(GTK_CONTAINER(content), 12);
+    gtk_box_set_spacing(GTK_BOX(content), 10);
+
+    /* Search bar row */
+    GtkWidget *s_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    st->search_entry = gtk_search_entry_new();
+    gtk_entry_set_placeholder_text(GTK_ENTRY(st->search_entry),
+        tr(app, "Search headphones (e.g. Sony XM4, Sennheiser HD600, AirPods, DT 770)...",
+                "Пошук навушників (напр. Sony XM4, Sennheiser HD600, AirPods, DT 770)..."));
+    gtk_widget_set_hexpand(st->search_entry, TRUE);
+    g_signal_connect(st->search_entry, "search-changed", G_CALLBACK(on_autoeq_search_entry_changed), st);
+
+    GtkWidget *btn_upd = gtk_button_new_with_label(tr(app, "🔄 Update DB", "🔄 Оновити базу"));
+    gtk_widget_set_tooltip_text(btn_upd, tr(app, "Download latest AutoEQ index from GitHub",
+                                                 "Завантажити найсвіжішу базу AutoEQ з GitHub"));
+    g_signal_connect(btn_upd, "clicked", G_CALLBACK(on_autoeq_update_db_clicked), st);
+
+    gtk_box_pack_start(GTK_BOX(s_box), st->search_entry, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(s_box), btn_upd, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(content), s_box, FALSE, FALSE, 0);
+
+    /* Tree View & Store */
+    st->store = gtk_list_store_new(4, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_INT);
+    st->tree_view = gtk_tree_view_new_with_model(GTK_TREE_MODEL(st->store));
+    g_object_unref(st->store);
+
+    GtkCellRenderer *r_name = gtk_cell_renderer_text_new();
+    GtkTreeViewColumn *col_name = gtk_tree_view_column_new_with_attributes(
+        tr(app, "Headphone Model", "Модель навушників"), r_name, "text", 0, NULL);
+    gtk_tree_view_column_set_expand(col_name, TRUE);
+    gtk_tree_view_append_column(GTK_TREE_VIEW(st->tree_view), col_name);
+
+    GtkCellRenderer *r_src = gtk_cell_renderer_text_new();
+    GtkTreeViewColumn *col_src = gtk_tree_view_column_new_with_attributes(
+        tr(app, "Measurement Source / Rig", "Джерело вимірювання / стенд"), r_src, "text", 1, NULL);
+    gtk_tree_view_column_set_min_width(col_src, 230);
+    gtk_tree_view_append_column(GTK_TREE_VIEW(st->tree_view), col_src);
+
+    g_signal_connect(st->tree_view, "row-activated", G_CALLBACK(on_autoeq_tree_row_activated), st);
+
+    GtkWidget *scroll = gtk_scrolled_window_new(NULL, NULL);
+    gtk_widget_set_vexpand(scroll, TRUE);
+    gtk_container_add(GTK_CONTAINER(scroll), st->tree_view);
+    gtk_box_pack_start(GTK_BOX(content), scroll, TRUE, TRUE, 0);
+
+    /* Bottom status row */
+    st->lbl_status = gtk_label_new("");
+    gtk_widget_set_halign(st->lbl_status, GTK_ALIGN_START);
+    gtk_style_context_add_class(gtk_widget_get_style_context(st->lbl_status), "dim-label");
+    gtk_box_pack_start(GTK_BOX(content), st->lbl_status, FALSE, FALSE, 0);
+
+    /* Action bar */
+    GtkWidget *act_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    GtkWidget *btn_browse = gtk_button_new_with_label(tr(app, "📁 Open File (.txt)...", "📁 Відкрити файл (.txt)..."));
+    gtk_widget_set_tooltip_text(btn_browse, tr(app, "Import local EqualizerAPO or AutoEQ .txt file from disk",
+                                                    "Імпортувати локальний файл .txt з диска"));
+    g_signal_connect(btn_browse, "clicked", G_CALLBACK(on_autoeq_browse_btn_clicked), st);
+
+    GtkWidget *btn_cancel = gtk_button_new_with_label(tr(app, "Cancel", "Скасувати"));
+    g_signal_connect_swapped(btn_cancel, "clicked", G_CALLBACK(gtk_widget_destroy), st->dialog);
+
+    st->btn_apply = gtk_button_new_with_label(tr(app, "✓ Apply EQ Curve", "✓ Застосувати криву EQ"));
+    gtk_style_context_add_class(gtk_widget_get_style_context(st->btn_apply), "accent");
+    g_signal_connect(st->btn_apply, "clicked", G_CALLBACK(on_autoeq_apply_btn_clicked), st);
+
+    gtk_box_pack_start(GTK_BOX(act_box), btn_browse, FALSE, FALSE, 0);
+    gtk_box_pack_end(GTK_BOX(act_box), st->btn_apply, FALSE, FALSE, 0);
+    gtk_box_pack_end(GTK_BOX(act_box), btn_cancel, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(content), act_box, FALSE, FALSE, 4);
+
+    g_object_set_data_full(G_OBJECT(st->dialog), "state", st, g_free);
+
+    filter_autoeq_list(st);
+    gtk_widget_show_all(st->dialog);
+}
+
+static void on_autoeq_search_btn_clicked(GtkButton *btn, gpointer data) {
+    (void)btn;
+    PipelineWin *pw = (PipelineWin *)data;
+    show_autoeq_search_dialog(pw);
+}
+
 static void on_import_autoeq_clicked(GtkButton *btn, gpointer data) {
     (void)btn;
     PipelineWin *pw = (PipelineWin *)data;
@@ -1828,10 +2279,10 @@ static void update_window_language(PipelineWin *pw) {
                                        "Аналізатор спектра FFT у реальному часі (0% CPU коли вікно закрите)"));
     }
     if (pw->btn_autoeq) {
-        gtk_button_set_label(GTK_BUTTON(pw->btn_autoeq), tr(app, "📥 AutoEQ", "📥 AutoEQ"));
+        gtk_button_set_label(GTK_BUTTON(pw->btn_autoeq), tr(app, "🔍 Headphone EQ", "🔍 Пошук навушників EQ"));
         gtk_widget_set_tooltip_text(pw->btn_autoeq,
-                                    tr(app, "Import AutoEQ / EqualizerAPO ParametricEQ.txt or GraphicEQ.txt",
-                                       "Імпортувати AutoEQ / EqualizerAPO ParametricEQ.txt або GraphicEQ.txt"));
+                                    tr(app, "Search 8,800+ headphone equalizer profiles from AutoEQ",
+                                       "Пошук серед 8,800+ профілів еквалайзерів навушників AutoEQ"));
     }
 
     if (!pw->is_microphone) {
@@ -1917,8 +2368,14 @@ static void update_window_language(PipelineWin *pw) {
         gtk_widget_set_tooltip_text(pw->btn_pr_exp,
             tr(app, "Export current profile to a .conf file", "Експортувати поточний профіль у файл .conf"));
     }
+    if (pw->btn_pr_search_eq) {
+        gtk_button_set_label(GTK_BUTTON(pw->btn_pr_search_eq), tr(app, "🔍 AutoEQ Search", "🔍 Пошук AutoEQ"));
+        gtk_widget_set_tooltip_text(pw->btn_pr_search_eq,
+            tr(app, "Search 8,800+ headphone equalizer profiles from AutoEQ",
+               "Пошук серед 8,800+ профілів еквалайзерів навушників AutoEQ"));
+    }
     if (pw->btn_pr_autoeq) {
-        gtk_button_set_label(GTK_BUTTON(pw->btn_pr_autoeq), tr(app, "📥 AutoEQ (.txt)", "📥 AutoEQ (.txt)"));
+        gtk_button_set_label(GTK_BUTTON(pw->btn_pr_autoeq), tr(app, "📁 Import .txt", "📁 Імпорт .txt"));
         gtk_widget_set_tooltip_text(pw->btn_pr_autoeq,
             tr(app, "Import AutoEQ / EqualizerAPO ParametricEQ.txt or GraphicEQ.txt",
                "Імпортувати AutoEQ / EqualizerAPO ParametricEQ.txt або GraphicEQ.txt"));
@@ -2155,7 +2612,11 @@ static GtkWidget *build_presets_tab(PipelineWin *pw) {
     pw->btn_pr_exp = gtk_button_new_with_label(tr(app, "📤 Export", "📤 Експорт"));
     g_signal_connect(pw->btn_pr_exp, "clicked", G_CALLBACK(on_export_profile_clicked), pw);
 
-    pw->btn_pr_autoeq = gtk_button_new_with_label(tr(app, "📥 AutoEQ (.txt)", "📥 AutoEQ (.txt)"));
+    pw->btn_pr_search_eq = gtk_button_new_with_label(tr(app, "🔍 AutoEQ Search", "🔍 Пошук AutoEQ"));
+    gtk_style_context_add_class(gtk_widget_get_style_context(pw->btn_pr_search_eq), "accent");
+    g_signal_connect(pw->btn_pr_search_eq, "clicked", G_CALLBACK(on_autoeq_search_btn_clicked), pw);
+
+    pw->btn_pr_autoeq = gtk_button_new_with_label(tr(app, "📁 AutoEQ File", "📁 Файл AutoEQ"));
     g_signal_connect(pw->btn_pr_autoeq, "clicked", G_CALLBACK(on_import_autoeq_clicked), pw);
 
     pw->btn_pr_ee = gtk_button_new_with_label("EasyEffects");
@@ -2175,6 +2636,7 @@ static GtkWidget *build_presets_tab(PipelineWin *pw) {
     gtk_box_pack_start(GTK_BOX(card_pr), pw->btn_pr_save, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(card_pr), pw->btn_pr_imp, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(card_pr), pw->btn_pr_exp, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(card_pr), pw->btn_pr_search_eq, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(card_pr), pw->btn_pr_autoeq, FALSE, FALSE, 0);
     gtk_box_pack_end(GTK_BOX(card_pr), pw->btn_pr_reset, FALSE, FALSE, 0);
     gtk_box_pack_end(GTK_BOX(card_pr), pw->btn_pr_ee, FALSE, FALSE, 2);
@@ -2490,8 +2952,9 @@ static GtkWidget *build_pipeline_window(PipelineWin *pw, bool is_mic) {
     g_signal_connect(pw->chk_spectrum, "toggled", G_CALLBACK(on_spectrum_toggled), pw);
     gtk_box_pack_start(GTK_BOX(eq_hbar), pw->chk_spectrum, FALSE, FALSE, 2);
 
-    pw->btn_autoeq = gtk_button_new_with_label("📥 AutoEQ");
-    g_signal_connect(pw->btn_autoeq, "clicked", G_CALLBACK(on_import_autoeq_clicked), pw);
+    pw->btn_autoeq = gtk_button_new_with_label(tr(app, "🔍 Headphone EQ", "🔍 Пошук навушників EQ"));
+    gtk_style_context_add_class(gtk_widget_get_style_context(pw->btn_autoeq), "accent");
+    g_signal_connect(pw->btn_autoeq, "clicked", G_CALLBACK(on_autoeq_search_btn_clicked), pw);
     gtk_box_pack_start(GTK_BOX(eq_hbar), pw->btn_autoeq, FALSE, FALSE, 2);
 
     GtkWidget *sep_pr = gtk_separator_new(GTK_ORIENTATION_VERTICAL);

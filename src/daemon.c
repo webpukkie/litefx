@@ -108,15 +108,33 @@ typedef struct {
     /* Active PipeWire Link Proxies */
     struct pw_proxy      *link_sink_mon_l;
     struct pw_proxy      *link_sink_mon_r;
+    uint32_t              linked_sink_mon_out_l;
+    uint32_t              linked_sink_mon_out_r;
+    uint32_t              linked_sink_mon_in_l;
+    uint32_t              linked_sink_mon_in_r;
+
     struct pw_proxy      *link_sink_hw_l;
     struct pw_proxy      *link_sink_hw_r;
+    uint32_t              linked_sink_hw_out_l;
+    uint32_t              linked_sink_hw_out_r;
+    uint32_t              linked_sink_hw_in_l;
+    uint32_t              linked_sink_hw_in_r;
     uint32_t              linked_hw_sink_id;
 
     struct pw_proxy      *link_source_hw_l;
     struct pw_proxy      *link_source_hw_r;
+    uint32_t              linked_source_hw_out_l;
+    uint32_t              linked_source_hw_out_r;
+    uint32_t              linked_source_hw_in_l;
+    uint32_t              linked_source_hw_in_r;
+    uint32_t              linked_hw_source_id;
+
     struct pw_proxy      *link_source_play_l;
     struct pw_proxy      *link_source_play_r;
-    uint32_t              linked_hw_source_id;
+    uint32_t              linked_source_play_out_l;
+    uint32_t              linked_source_play_out_r;
+    uint32_t              linked_source_play_in_l;
+    uint32_t              linked_source_play_in_r;
 
     /* Hardware Devices */
     TrackedDev            sinks[LITEFX_MAX_SINKS];
@@ -366,81 +384,117 @@ static void reconcile_links(DaemonCtx *ctx) {
 
     /* 1. Output Pipeline: litefx_sink:monitor -> litefx_sink_dsp:input */
     if (ctx->virtual_sink_id != 0 && ctx->sink_dsp_node_id != 0) {
-        if (!ctx->link_sink_mon_l || !ctx->link_sink_mon_r) {
-            uint32_t mon_l = find_port_id(ctx, ctx->virtual_sink_id, false, true, 0, false);
-            uint32_t mon_r = find_port_id(ctx, ctx->virtual_sink_id, false, true, 1, false);
-            uint32_t dsp_in_l = find_port_id(ctx, ctx->sink_dsp_node_id, true, false, 0, false);
-            uint32_t dsp_in_r = find_port_id(ctx, ctx->sink_dsp_node_id, true, false, 1, false);
+        uint32_t mon_l = find_port_id(ctx, ctx->virtual_sink_id, false, true, 0, false);
+        uint32_t mon_r = find_port_id(ctx, ctx->virtual_sink_id, false, true, 1, false);
+        uint32_t dsp_in_l = find_port_id(ctx, ctx->sink_dsp_node_id, true, false, 0, false);
+        uint32_t dsp_in_r = find_port_id(ctx, ctx->sink_dsp_node_id, true, false, 1, false);
 
-            if (mon_l && mon_r && dsp_in_l && dsp_in_r) {
-                destroy_proxy_safe(&ctx->link_sink_mon_l);
-                destroy_proxy_safe(&ctx->link_sink_mon_r);
-                ctx->link_sink_mon_l = create_pw_link(ctx, ctx->virtual_sink_id, mon_l,
-                                                      ctx->sink_dsp_node_id, dsp_in_l);
-                ctx->link_sink_mon_r = create_pw_link(ctx, ctx->virtual_sink_id, mon_r,
-                                                      ctx->sink_dsp_node_id, dsp_in_r);
-            }
+        if (mon_l && dsp_in_l && (!ctx->link_sink_mon_l || ctx->linked_sink_mon_out_l != mon_l || ctx->linked_sink_mon_in_l != dsp_in_l)) {
+            destroy_proxy_safe(&ctx->link_sink_mon_l);
+            ctx->link_sink_mon_l = create_pw_link(ctx, ctx->virtual_sink_id, mon_l,
+                                                  ctx->sink_dsp_node_id, dsp_in_l);
+            ctx->linked_sink_mon_out_l = mon_l;
+            ctx->linked_sink_mon_in_l = dsp_in_l;
+        }
+        if (mon_r && dsp_in_r && (!ctx->link_sink_mon_r || ctx->linked_sink_mon_out_r != mon_r || ctx->linked_sink_mon_in_r != dsp_in_r)) {
+            destroy_proxy_safe(&ctx->link_sink_mon_r);
+            ctx->link_sink_mon_r = create_pw_link(ctx, ctx->virtual_sink_id, mon_r,
+                                                  ctx->sink_dsp_node_id, dsp_in_r);
+            ctx->linked_sink_mon_out_r = mon_r;
+            ctx->linked_sink_mon_in_r = dsp_in_r;
         }
     }
 
     /* 2. Output Pipeline: litefx_sink_dsp:output -> target_hw_sink:playback */
     const TrackedDev *hw_sink = resolve_target_sink(ctx);
     if (hw_sink && ctx->sink_dsp_node_id != 0) {
-        if (!ctx->link_sink_hw_l || !ctx->link_sink_hw_r || ctx->linked_hw_sink_id != hw_sink->id) {
-            uint32_t dsp_out_l = find_port_id(ctx, ctx->sink_dsp_node_id, false, false, 0, false);
-            uint32_t dsp_out_r = find_port_id(ctx, ctx->sink_dsp_node_id, false, false, 1, false);
-            uint32_t hw_in_l = find_port_id(ctx, hw_sink->id, true, false, 0, false);
-            uint32_t hw_in_r = find_port_id(ctx, hw_sink->id, true, false, 1, true);
+        if (ctx->linked_hw_sink_id != hw_sink->id) {
+            destroy_proxy_safe(&ctx->link_sink_hw_l);
+            destroy_proxy_safe(&ctx->link_sink_hw_r);
+            ctx->linked_sink_hw_out_l = ctx->linked_sink_hw_out_r = 0;
+            ctx->linked_sink_hw_in_l = ctx->linked_sink_hw_in_r = 0;
+            ctx->linked_hw_sink_id = hw_sink->id;
+        }
 
-            if (dsp_out_l && dsp_out_r && hw_in_l && hw_in_r) {
-                destroy_proxy_safe(&ctx->link_sink_hw_l);
-                destroy_proxy_safe(&ctx->link_sink_hw_r);
-                ctx->link_sink_hw_l = create_pw_link(ctx, ctx->sink_dsp_node_id, dsp_out_l,
-                                                     hw_sink->id, hw_in_l);
-                ctx->link_sink_hw_r = create_pw_link(ctx, ctx->sink_dsp_node_id, dsp_out_r,
-                                                     hw_sink->id, hw_in_r);
-                ctx->linked_hw_sink_id = hw_sink->id;
-            }
+        uint32_t dsp_out_l = find_port_id(ctx, ctx->sink_dsp_node_id, false, false, 0, false);
+        uint32_t dsp_out_r = find_port_id(ctx, ctx->sink_dsp_node_id, false, false, 1, false);
+        uint32_t hw_in_l = find_port_id(ctx, hw_sink->id, true, false, 0, false);
+        /* Never fallback right channel to mono channel 0 prematurely during enumeration */
+        uint32_t hw_in_r = find_port_id(ctx, hw_sink->id, true, false, 1, false);
+
+        if (dsp_out_l && hw_in_l && (!ctx->link_sink_hw_l || ctx->linked_sink_hw_out_l != dsp_out_l || ctx->linked_sink_hw_in_l != hw_in_l)) {
+            destroy_proxy_safe(&ctx->link_sink_hw_l);
+            ctx->link_sink_hw_l = create_pw_link(ctx, ctx->sink_dsp_node_id, dsp_out_l,
+                                                 hw_sink->id, hw_in_l);
+            ctx->linked_sink_hw_out_l = dsp_out_l;
+            ctx->linked_sink_hw_in_l = hw_in_l;
+        }
+        if (dsp_out_r && hw_in_r && (!ctx->link_sink_hw_r || ctx->linked_sink_hw_out_r != dsp_out_r || ctx->linked_sink_hw_in_r != hw_in_r)) {
+            destroy_proxy_safe(&ctx->link_sink_hw_r);
+            ctx->link_sink_hw_r = create_pw_link(ctx, ctx->sink_dsp_node_id, dsp_out_r,
+                                                 hw_sink->id, hw_in_r);
+            ctx->linked_sink_hw_out_r = dsp_out_r;
+            ctx->linked_sink_hw_in_r = hw_in_r;
         }
     }
 
     /* 3. Input Pipeline: target_hw_source:capture -> litefx_source_dsp:input */
     const TrackedDev *hw_source = resolve_target_source(ctx);
     if (hw_source && ctx->source_dsp_node_id != 0) {
-        if (!ctx->link_source_hw_l || !ctx->link_source_hw_r || ctx->linked_hw_source_id != hw_source->id) {
-            uint32_t hw_out_l = find_port_id(ctx, hw_source->id, false, false, 0, false);
-            uint32_t hw_out_r = find_port_id(ctx, hw_source->id, false, false, 1, true);
-            uint32_t dsp_in_l = find_port_id(ctx, ctx->source_dsp_node_id, true, false, 0, false);
-            uint32_t dsp_in_r = find_port_id(ctx, ctx->source_dsp_node_id, true, false, 1, false);
+        if (ctx->linked_hw_source_id != hw_source->id) {
+            destroy_proxy_safe(&ctx->link_source_hw_l);
+            destroy_proxy_safe(&ctx->link_source_hw_r);
+            ctx->linked_source_hw_out_l = ctx->linked_source_hw_out_r = 0;
+            ctx->linked_source_hw_in_l = ctx->linked_source_hw_in_r = 0;
+            ctx->linked_hw_source_id = hw_source->id;
+        }
 
-            if (hw_out_l && hw_out_r && dsp_in_l && dsp_in_r) {
-                destroy_proxy_safe(&ctx->link_source_hw_l);
-                destroy_proxy_safe(&ctx->link_source_hw_r);
-                ctx->link_source_hw_l = create_pw_link(ctx, hw_source->id, hw_out_l,
-                                                       ctx->source_dsp_node_id, dsp_in_l);
-                ctx->link_source_hw_r = create_pw_link(ctx, hw_source->id, hw_out_r,
-                                                       ctx->source_dsp_node_id, dsp_in_r);
-                ctx->linked_hw_source_id = hw_source->id;
-            }
+        uint32_t hw_out_l = find_port_id(ctx, hw_source->id, false, false, 0, false);
+        uint32_t hw_out_r = find_port_id(ctx, hw_source->id, false, false, 1, false);
+        uint32_t dsp_in_l = find_port_id(ctx, ctx->source_dsp_node_id, true, false, 0, false);
+        uint32_t dsp_in_r = find_port_id(ctx, ctx->source_dsp_node_id, true, false, 1, false);
+
+        /* Truly mono microphone fallback: replicate channel 0 to both DSP inputs */
+        if (!hw_out_r && hw_out_l) {
+            hw_out_r = hw_out_l;
+        }
+
+        if (hw_out_l && dsp_in_l && (!ctx->link_source_hw_l || ctx->linked_source_hw_out_l != hw_out_l || ctx->linked_source_hw_in_l != dsp_in_l)) {
+            destroy_proxy_safe(&ctx->link_source_hw_l);
+            ctx->link_source_hw_l = create_pw_link(ctx, hw_source->id, hw_out_l,
+                                                   ctx->source_dsp_node_id, dsp_in_l);
+            ctx->linked_source_hw_out_l = hw_out_l;
+            ctx->linked_source_hw_in_l = dsp_in_l;
+        }
+        if (hw_out_r && dsp_in_r && (!ctx->link_source_hw_r || ctx->linked_source_hw_out_r != hw_out_r || ctx->linked_source_hw_in_r != dsp_in_r)) {
+            destroy_proxy_safe(&ctx->link_source_hw_r);
+            ctx->link_source_hw_r = create_pw_link(ctx, hw_source->id, hw_out_r,
+                                                   ctx->source_dsp_node_id, dsp_in_r);
+            ctx->linked_source_hw_out_r = hw_out_r;
+            ctx->linked_source_hw_in_r = dsp_in_r;
         }
     }
 
     /* 4. Input Pipeline: litefx_source_dsp:output -> litefx_source:playback */
     if (ctx->virtual_source_id != 0 && ctx->source_dsp_node_id != 0) {
-        if (!ctx->link_source_play_l || !ctx->link_source_play_r) {
-            uint32_t dsp_out_l = find_port_id(ctx, ctx->source_dsp_node_id, false, false, 0, false);
-            uint32_t dsp_out_r = find_port_id(ctx, ctx->source_dsp_node_id, false, false, 1, false);
-            uint32_t src_in_l = find_port_id(ctx, ctx->virtual_source_id, true, false, 0, false);
-            uint32_t src_in_r = find_port_id(ctx, ctx->virtual_source_id, true, false, 1, false);
+        uint32_t dsp_out_l = find_port_id(ctx, ctx->source_dsp_node_id, false, false, 0, false);
+        uint32_t dsp_out_r = find_port_id(ctx, ctx->source_dsp_node_id, false, false, 1, false);
+        uint32_t src_in_l = find_port_id(ctx, ctx->virtual_source_id, true, false, 0, false);
+        uint32_t src_in_r = find_port_id(ctx, ctx->virtual_source_id, true, false, 1, false);
 
-            if (dsp_out_l && dsp_out_r && src_in_l && src_in_r) {
-                destroy_proxy_safe(&ctx->link_source_play_l);
-                destroy_proxy_safe(&ctx->link_source_play_r);
-                ctx->link_source_play_l = create_pw_link(ctx, ctx->source_dsp_node_id, dsp_out_l,
-                                                         ctx->virtual_source_id, src_in_l);
-                ctx->link_source_play_r = create_pw_link(ctx, ctx->source_dsp_node_id, dsp_out_r,
-                                                         ctx->virtual_source_id, src_in_r);
-            }
+        if (dsp_out_l && src_in_l && (!ctx->link_source_play_l || ctx->linked_source_play_out_l != dsp_out_l || ctx->linked_source_play_in_l != src_in_l)) {
+            destroy_proxy_safe(&ctx->link_source_play_l);
+            ctx->link_source_play_l = create_pw_link(ctx, ctx->source_dsp_node_id, dsp_out_l,
+                                                     ctx->virtual_source_id, src_in_l);
+            ctx->linked_source_play_out_l = dsp_out_l;
+            ctx->linked_source_play_in_l = src_in_l;
+        }
+        if (dsp_out_r && src_in_r && (!ctx->link_source_play_r || ctx->linked_source_play_out_r != dsp_out_r || ctx->linked_source_play_in_r != src_in_r)) {
+            destroy_proxy_safe(&ctx->link_source_play_r);
+            ctx->link_source_play_r = create_pw_link(ctx, ctx->source_dsp_node_id, dsp_out_r,
+                                                     ctx->virtual_source_id, src_in_r);
+            ctx->linked_source_play_out_r = dsp_out_r;
+            ctx->linked_source_play_in_r = src_in_r;
         }
     }
 }
@@ -793,9 +847,11 @@ static int classify_port_channel(const char *port_name, const char *dsp_channel)
     const char *s = (dsp_channel && dsp_channel[0]) ? dsp_channel : port_name;
     if (!s) return -1;
     if (strstr(s, "FL") || strstr(s, "_0") || strstr(s, "MONO") || strstr(s, "mono") ||
+        strstr(s, "left") || strstr(s, "Left") ||
         strcmp(s, "in_l") == 0 || strcmp(s, "out_l") == 0 || strcmp(s, "input_FL") == 0 || strcmp(s, "output_FL") == 0)
         return 0;
     if (strstr(s, "FR") || strstr(s, "_1") ||
+        strstr(s, "right") || strstr(s, "Right") ||
         strcmp(s, "in_r") == 0 || strcmp(s, "out_r") == 0 || strcmp(s, "input_FR") == 0 || strcmp(s, "output_FR") == 0)
         return 1;
     return -1;
@@ -978,7 +1034,40 @@ static void on_registry_global_remove(void *data, uint32_t id) {
 
     for (uint32_t i = 0; i < ctx->port_count; ++i) {
         if (ctx->ports[i].global_id == id) {
+            if (ctx->linked_sink_mon_out_l == id || ctx->linked_sink_mon_in_l == id) {
+                destroy_proxy_safe(&ctx->link_sink_mon_l);
+                ctx->linked_sink_mon_out_l = ctx->linked_sink_mon_in_l = 0;
+            }
+            if (ctx->linked_sink_mon_out_r == id || ctx->linked_sink_mon_in_r == id) {
+                destroy_proxy_safe(&ctx->link_sink_mon_r);
+                ctx->linked_sink_mon_out_r = ctx->linked_sink_mon_in_r = 0;
+            }
+            if (ctx->linked_sink_hw_out_l == id || ctx->linked_sink_hw_in_l == id) {
+                destroy_proxy_safe(&ctx->link_sink_hw_l);
+                ctx->linked_sink_hw_out_l = ctx->linked_sink_hw_in_l = 0;
+            }
+            if (ctx->linked_sink_hw_out_r == id || ctx->linked_sink_hw_in_r == id) {
+                destroy_proxy_safe(&ctx->link_sink_hw_r);
+                ctx->linked_sink_hw_out_r = ctx->linked_sink_hw_in_r = 0;
+            }
+            if (ctx->linked_source_hw_out_l == id || ctx->linked_source_hw_in_l == id) {
+                destroy_proxy_safe(&ctx->link_source_hw_l);
+                ctx->linked_source_hw_out_l = ctx->linked_source_hw_in_l = 0;
+            }
+            if (ctx->linked_source_hw_out_r == id || ctx->linked_source_hw_in_r == id) {
+                destroy_proxy_safe(&ctx->link_source_hw_r);
+                ctx->linked_source_hw_out_r = ctx->linked_source_hw_in_r = 0;
+            }
+            if (ctx->linked_source_play_out_l == id || ctx->linked_source_play_in_l == id) {
+                destroy_proxy_safe(&ctx->link_source_play_l);
+                ctx->linked_source_play_out_l = ctx->linked_source_play_in_l = 0;
+            }
+            if (ctx->linked_source_play_out_r == id || ctx->linked_source_play_in_r == id) {
+                destroy_proxy_safe(&ctx->link_source_play_r);
+                ctx->linked_source_play_out_r = ctx->linked_source_play_in_r = 0;
+            }
             ctx->ports[i] = ctx->ports[--ctx->port_count];
+            reconcile_links(ctx);
             return;
         }
     }
@@ -988,6 +1077,8 @@ static void on_registry_global_remove(void *data, uint32_t id) {
             if (ctx->linked_hw_sink_id == id) {
                 destroy_proxy_safe(&ctx->link_sink_hw_l);
                 destroy_proxy_safe(&ctx->link_sink_hw_r);
+                ctx->linked_sink_hw_out_l = ctx->linked_sink_hw_out_r = 0;
+                ctx->linked_sink_hw_in_l = ctx->linked_sink_hw_in_r = 0;
                 ctx->linked_hw_sink_id = 0;
             }
             for (uint32_t j = i; j + 1 < ctx->sink_count; ++j) ctx->sinks[j] = ctx->sinks[j + 1];
@@ -1003,6 +1094,8 @@ static void on_registry_global_remove(void *data, uint32_t id) {
             if (ctx->linked_hw_source_id == id) {
                 destroy_proxy_safe(&ctx->link_source_hw_l);
                 destroy_proxy_safe(&ctx->link_source_hw_r);
+                ctx->linked_source_hw_out_l = ctx->linked_source_hw_out_r = 0;
+                ctx->linked_source_hw_in_l = ctx->linked_source_hw_in_r = 0;
                 ctx->linked_hw_source_id = 0;
             }
             for (uint32_t j = i; j + 1 < ctx->source_count; ++j) ctx->sources[j] = ctx->sources[j + 1];
@@ -1044,11 +1137,15 @@ static void apply_new_config(DaemonCtx *ctx, const LiteFxConfig *new_cfg, bool s
     if (sink_dev_changed) {
         destroy_proxy_safe(&ctx->link_sink_hw_l);
         destroy_proxy_safe(&ctx->link_sink_hw_r);
+        ctx->linked_sink_hw_out_l = ctx->linked_sink_hw_out_r = 0;
+        ctx->linked_sink_hw_in_l = ctx->linked_sink_hw_in_r = 0;
         ctx->linked_hw_sink_id = 0;
     }
     if (source_dev_changed) {
         destroy_proxy_safe(&ctx->link_source_hw_l);
         destroy_proxy_safe(&ctx->link_source_hw_r);
+        ctx->linked_source_hw_out_l = ctx->linked_source_hw_out_r = 0;
+        ctx->linked_source_hw_in_l = ctx->linked_source_hw_in_r = 0;
         ctx->linked_hw_source_id = 0;
     }
 
