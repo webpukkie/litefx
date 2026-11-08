@@ -67,7 +67,7 @@ bool dsp_compute_eq_biquad(const EqBandConfig *band, uint32_t sample_rate, Biqua
             b2 = A * ((A + 1.0) - (A - 1.0) * cw - two_sqrtA_alpha);
             a0 = (A + 1.0) + (A - 1.0) * cw + two_sqrtA_alpha;
             a1 = -2.0 * ((A - 1.0) + (A + 1.0) * cw);
-            a2 = (A + 1.0) - (A - 1.0) * cw - two_sqrtA_alpha;
+            a2 = (A + 1.0) + (A - 1.0) * cw - two_sqrtA_alpha;
             break;
         }
 
@@ -342,18 +342,23 @@ static inline void biquad_chunk_mono(const BiquadCoeffs * restrict c,
     const double b0 = c->b0, b1 = c->b1, b2 = c->b2;
     const double a1 = c->a1, a2 = c->a2;
     double z1 = s->z1, z2 = s->z2;
+    if (isnan(z1) || isinf(z1)) z1 = 0.0;
+    if (isnan(z2) || isinf(z2)) z2 = 0.0;
+
     for (uint32_t i = 0; i < n; ++i) {
         double x = (double)buf[i];
+        if (isnan(x) || isinf(x)) x = 0.0;
         double y = b0 * x + z1;
         z1 = b1 * x - a1 * y + z2;
         z2 = b2 * x - a2 * y;
         buf[i] = (float)y;
     }
-    s->z1 = z1;
-    s->z2 = z2;
+    s->z1 = (isnan(z1) || isinf(z1)) ? 0.0 : z1;
+    s->z2 = (isnan(z2) || isinf(z2)) ? 0.0 : z2;
 }
 
 static inline float soft_limit_sample(float x) {
+    if (isnan(x) || isinf(x)) return 0.0f;
     const float T = 0.96f;
     const float CEIL = 0.999f;
     const float HEAD = CEIL - T;

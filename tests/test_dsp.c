@@ -140,6 +140,28 @@ int main(void) {
     assert(fabsf(measured_1k - 6.0f) < 0.05f);
     assert(fabsf(measured_1k - analytic_1k) < 0.02f);
 
+    /* 3b. Low Shelf Stability and Accuracy Test (verifies AutoEQ Band #1 stability) */
+    litefx_config_set_defaults(&cfg);
+    cfg.sink_crystal_bypass = true;
+    cfg.sink_eq_bypass = false;
+    cfg.sink_auto_preamp = false;
+    cfg.sink_soft_limiter = false;
+    cfg.sink_eq_left[0].enabled = true;
+    cfg.sink_eq_left[0].type = EQ_BAND_LOW_SHELF;
+    cfg.sink_eq_left[0].freq = 105.0f;
+    cfg.sink_eq_left[0].gain_db = 4.1f;
+    cfg.sink_eq_left[0].q = 0.70f;
+    for (int i = 1; i < LITEFX_MAX_EQ_BANDS; ++i) cfg.sink_eq_left[i].enabled = false;
+    cfg.sink_eq_right[0] = cfg.sink_eq_left[0];
+    dsp_engine_update_sink(&eng, &cfg, fs);
+
+    float measured_ls = measure_sine_gain_db(&eng, 50.0f, fs);
+    float analytic_ls = dsp_eval_eq_magnitude_db(cfg.sink_eq_left, cfg.sink_eq_num_bands, fs, 50.0f);
+    printf("[3b] Low Shelf +4.1 dB @ 105 Hz (measured @ 50 Hz): measured=%.4f dB, analytic=%.4f dB\n",
+           measured_ls, analytic_ls);
+    assert(!isnan(measured_ls) && !isinf(measured_ls));
+    assert(fabsf(measured_ls - analytic_ls) < 0.15f);
+
     /* 4. Microphone Noise Gate, Denoiser & Compressor Test */
     litefx_config_set_defaults(&cfg);
     cfg.source_noise_gate = true;
