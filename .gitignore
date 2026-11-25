@@ -1,6 +1,16 @@
-build/
-dist/
-*.o
-*.tar.gz
-*.pkg.tar.zst
-*.deb
+# Build artifacts
+/build/
+/result
+
+# Arch packages
+/packaging/arch/*.pkg.tar.zst
+/packaging/arch/*.tar.gz
+/packaging/arch/src/
+/packaging/arch/pkg/
+
+# Debian build artifacts
+/debian/.debhelper/
+/debian/tmp/
+/debian/*.substvars
+/debian/*.debhelper
+/debian/files
