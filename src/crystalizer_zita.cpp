@@ -492,8 +492,7 @@ void crystalizer_zita_process(CrystalizerZita *cz,
 
     std::scoped_lock lock(cz->lock);
 
-    if (!cz->ready || (cz->blocksize != n_samples && (n_samples & (n_samples - 1)) == 0 && n_samples >= 64 && n_samples <= 2048)) {
-        cz->blocksize = n_samples;
+    if (!cz->ready) {
         cz_init_filters(cz);
     }
 

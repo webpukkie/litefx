@@ -75,6 +75,7 @@ typedef struct {
     GtkWidget   *eq_faders_box;
     GtkWidget   *eq_fader_scales[LITEFX_MAX_EQ_BANDS];
     GtkWidget   *eq_fader_labels[LITEFX_MAX_EQ_BANDS];
+    GtkWidget   *eq_fader_db_labels[LITEFX_MAX_EQ_BANDS];
 
     /* Crystalizer */
     GtkWidget   *lbl_cryst_title;
@@ -198,7 +199,16 @@ static const char *DARK_STUDIO_CSS =
     "treeview:selected { background-color: #f8adfb; color: #1e1010; font-weight: 700; }"
     "treeview header button { background-color: #231515; color: #f8adfb; border: 1px solid #4a2c2c; font-weight: 700; border-radius: 0px; padding: 4px 8px; }"
     "searchentry { background-color: #2b1c1b; color: #f8dcdb; border: 1px solid #4a2c2c; border-radius: 0px; }"
-    "separator { background-color: #4a2c2c; }";
+    "separator { background-color: #4a2c2c; }"
+    "popover { background-color: #231515; border: 1px solid #ff9e9e; border-radius: 0px; box-shadow: 0 4px 16px rgba(0,0,0,0.8); padding: 4px; }"
+    "popover contents { background-color: #231515; color: #f8dcdb; border-radius: 0px; }"
+    "button.fader-btn-db { background-color: #2b1c1b; border: 1px solid #3d2626; color: #f8adfb; font-size: 10px; font-family: 'Monocraft', monospace; padding: 2px 2px; min-height: 22px; border-radius: 0px; margin: 1px 0px; font-weight: 700; }"
+    "button.fader-btn-db:hover { background-color: #3b2525; border-color: #ff9e9e; color: #ffffff; }"
+    "button.fader-btn-freq { background-color: #2b1c1b; border: 1px solid #3d2626; color: #f8dcdb; font-size: 10px; font-family: 'Monocraft', monospace; padding: 2px 2px; min-height: 22px; border-radius: 0px; margin: 1px 0px; font-weight: 700; }"
+    "button.fader-btn-freq:hover { background-color: #3b2525; border-color: #f8adfb; color: #ffffff; }"
+    "button.fader-btn-freq.selected, button.fader-btn-db.selected { border-color: #ff9e9e; background-color: #3b1e32; color: #ffffff; }"
+    "button.quick-step-btn { background-color: #2b1c1b; border: 1px solid #4a2c2c; color: #f8dcdb; font-size: 10px; padding: 2px 4px; min-height: 24px; min-width: 28px; font-weight: 700; border-radius: 0px; }"
+    "button.quick-step-btn:hover { background-color: #f8adfb; color: #1e1010; border-color: #f8adfb; }";
 
 static bool connect_shm(GuiApp *app) {
     if (app->shm) return true;
@@ -351,6 +361,7 @@ static float y_to_db(double y, double y0, double h) {
 
 static void update_inspector(PipelineWin *pw);
 static void rebuild_faders(PipelineWin *pw);
+static void update_fader_ui_band(PipelineWin *pw, int b);
 static void refresh_window_ui(PipelineWin *pw);
 static void update_window_language(PipelineWin *pw);
 static void reload_presets_combo(PipelineWin *pw);
@@ -584,9 +595,7 @@ static gboolean on_bode_button_press(GtkWidget *widget, GdkEventButton *ev, gpoi
         pw->selected_eq_band = best;
         if (ev->button == 3 || ev->type == GDK_2BUTTON_PRESS) {
             bands[best].gain_db = 0.0f;
-            pw->app->updating_ui = true;
-            if (pw->eq_fader_scales[best]) gtk_range_set_value(GTK_RANGE(pw->eq_fader_scales[best]), 0.0);
-            pw->app->updating_ui = false;
+            update_fader_ui_band(pw, best);
             update_inspector(pw);
             push_config_live(pw->app, false);
         } else if (ev->button == 1) {
@@ -624,15 +633,7 @@ static gboolean on_bode_motion(GtkWidget *widget, GdkEventMotion *ev, gpointer d
         pw->app->cfg.sink_eq_right[b] = *band;
     }
 
-    pw->app->updating_ui = true;
-    if (pw->eq_fader_scales[b]) gtk_range_set_value(GTK_RANGE(pw->eq_fader_scales[b]), band->gain_db);
-    if (pw->eq_fader_labels[b]) {
-        char flbl[16];
-        format_freq_short(band->freq, flbl, sizeof(flbl));
-        gtk_label_set_text(GTK_LABEL(pw->eq_fader_labels[b]), flbl);
-    }
-    pw->app->updating_ui = false;
-
+    update_fader_ui_band(pw, b);
     update_inspector(pw);
     push_config_live(pw->app, false);
     gtk_widget_queue_draw(widget);
@@ -738,6 +739,19 @@ static void update_inspector(PipelineWin *pw) {
     gtk_spin_button_set_value(GTK_SPIN_BUTTON(pw->spin_band_gain), b->gain_db);
     gtk_spin_button_set_value(GTK_SPIN_BUTTON(pw->spin_band_q), b->q);
 
+    for (uint32_t i = 0; i < nb; ++i) {
+        if (pw->eq_fader_labels[i]) {
+            GtkStyleContext *sc = gtk_widget_get_style_context(pw->eq_fader_labels[i]);
+            if ((int)i == pw->selected_eq_band) gtk_style_context_add_class(sc, "selected");
+            else gtk_style_context_remove_class(sc, "selected");
+        }
+        if (pw->eq_fader_db_labels[i]) {
+            GtkStyleContext *sc = gtk_widget_get_style_context(pw->eq_fader_db_labels[i]);
+            if ((int)i == pw->selected_eq_band) gtk_style_context_add_class(sc, "selected");
+            else gtk_style_context_remove_class(sc, "selected");
+        }
+    }
+
     pw->app->updating_ui = prev;
 }
 
@@ -760,17 +774,437 @@ static void on_inspector_changed(GtkWidget *w, gpointer data) {
         pw->app->cfg.sink_eq_right[b] = *band;
     }
 
-    pw->app->updating_ui = true;
-    if (pw->eq_fader_scales[b]) gtk_range_set_value(GTK_RANGE(pw->eq_fader_scales[b]), band->gain_db);
-    if (pw->eq_fader_labels[b]) {
-        char flbl[16];
-        format_freq_short(band->freq, flbl, sizeof(flbl));
-        gtk_label_set_text(GTK_LABEL(pw->eq_fader_labels[b]), flbl);
-    }
-    pw->app->updating_ui = false;
+    update_fader_ui_band(pw, b);
 
     push_config_live(pw->app, false);
     gtk_widget_queue_draw(pw->bode_area);
+}
+
+static void update_fader_ui_band(PipelineWin *pw, int b) {
+    if (b < 0 || b >= (int)get_active_eq_num_bands(pw)) return;
+    const EqBandConfig *band = &get_active_eq_bands(pw)[b];
+
+    bool prev = pw->app->updating_ui;
+    pw->app->updating_ui = true;
+
+    if (pw->eq_fader_scales[b]) {
+        gtk_range_set_value(GTK_RANGE(pw->eq_fader_scales[b]), band->gain_db);
+    }
+    if (pw->eq_fader_labels[b]) {
+        char flbl[24];
+        format_freq_short(band->freq, flbl, sizeof(flbl));
+        gtk_button_set_label(GTK_BUTTON(pw->eq_fader_labels[b]), flbl);
+    }
+    if (pw->eq_fader_db_labels[b]) {
+        char dblbl[24];
+        if (fabsf(band->gain_db) < 0.05f) snprintf(dblbl, sizeof(dblbl), "0.0 dB");
+        else snprintf(dblbl, sizeof(dblbl), "%+.1f dB", band->gain_db);
+        gtk_button_set_label(GTK_BUTTON(pw->eq_fader_db_labels[b]), dblbl);
+    }
+
+    pw->app->updating_ui = prev;
+}
+
+typedef struct {
+    PipelineWin *pw;
+    int          band_idx;
+    GtkWidget   *spin_freq;
+    GtkWidget   *spin_gain;
+    GtkWidget   *combo_type;
+    GtkWidget   *spin_q;
+    GtkWidget   *chk_on;
+} BandPopCtx;
+
+static void on_pop_gain_spin_changed(GtkSpinButton *spin, gpointer data) {
+    BandPopCtx *ctx = (BandPopCtx *)data;
+    PipelineWin *pw = ctx->pw;
+    int b = ctx->band_idx;
+    if (pw->app->updating_ui) return;
+    if (b < 0 || b >= (int)get_active_eq_num_bands(pw)) return;
+
+    EqBandConfig *band = &get_active_eq_bands(pw)[b];
+    band->gain_db = (float)gtk_spin_button_get_value(spin);
+    if (!pw->is_microphone && !pw->app->cfg.sink_eq_split_channels) {
+        pw->app->cfg.sink_eq_right[b] = *band;
+    }
+    pw->selected_eq_band = b;
+
+    update_fader_ui_band(pw, b);
+    update_inspector(pw);
+    push_config_live(pw->app, false);
+    gtk_widget_queue_draw(pw->bode_area);
+}
+
+static void on_pop_gain_preset_clicked(GtkButton *btn, gpointer data) {
+    BandPopCtx *ctx = (BandPopCtx *)data;
+    float target = (float)GPOINTER_TO_INT(g_object_get_data(G_OBJECT(btn), "target_db")) * 0.1f;
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(ctx->spin_gain), target);
+}
+
+static void on_pop_freq_spin_changed(GtkSpinButton *spin, gpointer data) {
+    BandPopCtx *ctx = (BandPopCtx *)data;
+    PipelineWin *pw = ctx->pw;
+    int b = ctx->band_idx;
+    if (pw->app->updating_ui) return;
+    if (b < 0 || b >= (int)get_active_eq_num_bands(pw)) return;
+
+    EqBandConfig *band = &get_active_eq_bands(pw)[b];
+    band->freq = (float)gtk_spin_button_get_value(spin);
+    if (!pw->is_microphone && !pw->app->cfg.sink_eq_split_channels) {
+        pw->app->cfg.sink_eq_right[b] = *band;
+    }
+    pw->selected_eq_band = b;
+
+    update_fader_ui_band(pw, b);
+    update_inspector(pw);
+    push_config_live(pw->app, false);
+    gtk_widget_queue_draw(pw->bode_area);
+}
+
+static void on_pop_freq_div2(GtkButton *btn, gpointer data) {
+    (void)btn;
+    BandPopCtx *ctx = (BandPopCtx *)data;
+    double cur = gtk_spin_button_get_value(GTK_SPIN_BUTTON(ctx->spin_freq));
+    double val = cur * 0.5;
+    if (val < 20.0) val = 20.0;
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(ctx->spin_freq), round(val));
+}
+
+static void on_pop_freq_sub10(GtkButton *btn, gpointer data) {
+    (void)btn;
+    BandPopCtx *ctx = (BandPopCtx *)data;
+    double cur = gtk_spin_button_get_value(GTK_SPIN_BUTTON(ctx->spin_freq));
+    double val = cur * 0.9;
+    if (val < 20.0) val = 20.0;
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(ctx->spin_freq), round(val));
+}
+
+static void on_pop_freq_add10(GtkButton *btn, gpointer data) {
+    (void)btn;
+    BandPopCtx *ctx = (BandPopCtx *)data;
+    double cur = gtk_spin_button_get_value(GTK_SPIN_BUTTON(ctx->spin_freq));
+    double val = cur * 1.1;
+    if (val > 20000.0) val = 20000.0;
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(ctx->spin_freq), round(val));
+}
+
+static void on_pop_freq_mul2(GtkButton *btn, gpointer data) {
+    (void)btn;
+    BandPopCtx *ctx = (BandPopCtx *)data;
+    double cur = gtk_spin_button_get_value(GTK_SPIN_BUTTON(ctx->spin_freq));
+    double val = cur * 2.0;
+    if (val > 20000.0) val = 20000.0;
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(ctx->spin_freq), round(val));
+}
+
+static void on_pop_freq_reset(GtkButton *btn, gpointer data) {
+    (void)btn;
+    BandPopCtx *ctx = (BandPopCtx *)data;
+    int b = ctx->band_idx;
+    float def_f = 1000.0f;
+    if (b < 10) def_f = LITEFX_ISO_10_FREQS[b];
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(ctx->spin_freq), (double)def_f);
+}
+
+static void on_pop_type_changed(GtkComboBox *cb, gpointer data) {
+    BandPopCtx *ctx = (BandPopCtx *)data;
+    PipelineWin *pw = ctx->pw;
+    int b = ctx->band_idx;
+    if (pw->app->updating_ui) return;
+    if (b < 0 || b >= (int)get_active_eq_num_bands(pw)) return;
+    int t = gtk_combo_box_get_active(cb);
+    if (t < 0 || t >= EQ_BAND_TYPE_COUNT) return;
+
+    EqBandConfig *band = &get_active_eq_bands(pw)[b];
+    band->type = (uint8_t)t;
+    if (!pw->is_microphone && !pw->app->cfg.sink_eq_split_channels) {
+        pw->app->cfg.sink_eq_right[b] = *band;
+    }
+    pw->selected_eq_band = b;
+    update_inspector(pw);
+    push_config_live(pw->app, false);
+    gtk_widget_queue_draw(pw->bode_area);
+}
+
+static void on_pop_q_changed(GtkSpinButton *spin, gpointer data) {
+    BandPopCtx *ctx = (BandPopCtx *)data;
+    PipelineWin *pw = ctx->pw;
+    int b = ctx->band_idx;
+    if (pw->app->updating_ui) return;
+    if (b < 0 || b >= (int)get_active_eq_num_bands(pw)) return;
+
+    EqBandConfig *band = &get_active_eq_bands(pw)[b];
+    band->q = (float)gtk_spin_button_get_value(spin);
+    if (!pw->is_microphone && !pw->app->cfg.sink_eq_split_channels) {
+        pw->app->cfg.sink_eq_right[b] = *band;
+    }
+    pw->selected_eq_band = b;
+    update_inspector(pw);
+    push_config_live(pw->app, false);
+    gtk_widget_queue_draw(pw->bode_area);
+}
+
+static void on_pop_on_toggled(GtkToggleButton *tb, gpointer data) {
+    BandPopCtx *ctx = (BandPopCtx *)data;
+    PipelineWin *pw = ctx->pw;
+    int b = ctx->band_idx;
+    if (pw->app->updating_ui) return;
+    if (b < 0 || b >= (int)get_active_eq_num_bands(pw)) return;
+
+    EqBandConfig *band = &get_active_eq_bands(pw)[b];
+    band->enabled = gtk_toggle_button_get_active(tb);
+    if (!pw->is_microphone && !pw->app->cfg.sink_eq_split_channels) {
+        pw->app->cfg.sink_eq_right[b] = *band;
+    }
+    pw->selected_eq_band = b;
+    update_inspector(pw);
+    push_config_live(pw->app, false);
+    gtk_widget_queue_draw(pw->bode_area);
+}
+
+static void on_eq_db_btn_clicked(GtkButton *btn, gpointer data) {
+    PipelineWin *pw = (PipelineWin *)data;
+    int b = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(btn), "band_idx"));
+    if (b < 0 || b >= (int)get_active_eq_num_bands(pw)) return;
+    pw->selected_eq_band = b;
+    update_inspector(pw);
+    gtk_widget_queue_draw(pw->bode_area);
+
+    EqBandConfig *band = &get_active_eq_bands(pw)[b];
+
+    GtkWidget *pop = gtk_popover_new(GTK_WIDGET(btn));
+    gtk_popover_set_position(GTK_POPOVER(pop), GTK_POS_BOTTOM);
+    g_signal_connect(pop, "closed", G_CALLBACK(gtk_widget_destroy), NULL);
+
+    BandPopCtx *ctx = g_new0(BandPopCtx, 1);
+    ctx->pw = pw;
+    ctx->band_idx = b;
+    g_object_set_data_full(G_OBJECT(pop), "ctx", ctx, g_free);
+
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+    gtk_container_set_border_width(GTK_CONTAINER(box), 8);
+
+    char title[64];
+    snprintf(title, sizeof(title), "%s #%d — %s",
+             tr(pw->app, "Band", "Смуга"), b + 1, tr(pw->app, "Gain (dB)", "Підсилення (дБ)"));
+    GtkWidget *lbl_t = gtk_label_new(title);
+    gtk_style_context_add_class(gtk_widget_get_style_context(lbl_t), "section-title");
+    gtk_box_pack_start(GTK_BOX(box), lbl_t, FALSE, FALSE, 0);
+
+    /* Spin button row */
+    GtkWidget *row_gain = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    GtkWidget *lbl_g = gtk_label_new(tr(pw->app, "Gain (dB):", "Підсилення (дБ):"));
+    ctx->spin_gain = gtk_spin_button_new_with_range(-24.0, 24.0, 0.1);
+    gtk_spin_button_set_digits(GTK_SPIN_BUTTON(ctx->spin_gain), 1);
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(ctx->spin_gain), band->gain_db);
+    g_signal_connect(ctx->spin_gain, "value-changed", G_CALLBACK(on_pop_gain_spin_changed), ctx);
+
+    gtk_box_pack_start(GTK_BOX(row_gain), lbl_g, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(row_gain), ctx->spin_gain, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(box), row_gain, FALSE, FALSE, 0);
+
+    /* Quick gain buttons row */
+    GtkWidget *row_q = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+    static const struct { const char *lbl; int val_10x; } qgains[5] = {
+        { "-6 dB", -60 }, { "-3 dB", -30 }, { "0 dB", 0 }, { "+3 dB", 30 }, { "+6 dB", 60 }
+    };
+    for (int i = 0; i < 5; ++i) {
+        GtkWidget *qb = gtk_button_new_with_label(qgains[i].lbl);
+        gtk_style_context_add_class(gtk_widget_get_style_context(qb), "quick-step-btn");
+        g_object_set_data(G_OBJECT(qb), "target_db", GINT_TO_POINTER(qgains[i].val_10x));
+        g_signal_connect(qb, "clicked", G_CALLBACK(on_pop_gain_preset_clicked), ctx);
+        gtk_box_pack_start(GTK_BOX(row_q), qb, TRUE, TRUE, 0);
+    }
+    gtk_box_pack_start(GTK_BOX(box), row_q, FALSE, FALSE, 2);
+
+    gtk_container_add(GTK_CONTAINER(pop), box);
+    gtk_widget_show_all(pop);
+    gtk_popover_popup(GTK_POPOVER(pop));
+}
+
+static void on_eq_freq_btn_clicked(GtkButton *btn, gpointer data) {
+    PipelineWin *pw = (PipelineWin *)data;
+    int b = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(btn), "band_idx"));
+    if (b < 0 || b >= (int)get_active_eq_num_bands(pw)) return;
+    pw->selected_eq_band = b;
+    update_inspector(pw);
+    gtk_widget_queue_draw(pw->bode_area);
+
+    EqBandConfig *band = &get_active_eq_bands(pw)[b];
+
+    GtkWidget *pop = gtk_popover_new(GTK_WIDGET(btn));
+    gtk_popover_set_position(GTK_POPOVER(pop), GTK_POS_TOP);
+    g_signal_connect(pop, "closed", G_CALLBACK(gtk_widget_destroy), NULL);
+
+    BandPopCtx *ctx = g_new0(BandPopCtx, 1);
+    ctx->pw = pw;
+    ctx->band_idx = b;
+    g_object_set_data_full(G_OBJECT(pop), "ctx", ctx, g_free);
+
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+    gtk_container_set_border_width(GTK_CONTAINER(box), 8);
+
+    char title[64];
+    snprintf(title, sizeof(title), "%s #%d — %s",
+             tr(pw->app, "Band", "Смуга"), b + 1, tr(pw->app, "Frequency & Filter", "Частота і фільтр"));
+    GtkWidget *lbl_t = gtk_label_new(title);
+    gtk_style_context_add_class(gtk_widget_get_style_context(lbl_t), "section-title");
+    gtk_box_pack_start(GTK_BOX(box), lbl_t, FALSE, FALSE, 0);
+
+    /* Frequency Row */
+    GtkWidget *row_f = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    GtkWidget *lbl_f = gtk_label_new(tr(pw->app, "Freq (Hz):", "Частота (Гц):"));
+    ctx->spin_freq = gtk_spin_button_new_with_range(20.0, 20000.0, 5.0);
+    gtk_spin_button_set_digits(GTK_SPIN_BUTTON(ctx->spin_freq), 0);
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(ctx->spin_freq), band->freq);
+    g_signal_connect(ctx->spin_freq, "value-changed", G_CALLBACK(on_pop_freq_spin_changed), ctx);
+
+    gtk_box_pack_start(GTK_BOX(row_f), lbl_f, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(row_f), ctx->spin_freq, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(box), row_f, FALSE, FALSE, 0);
+
+    /* Quick frequency multipliers row */
+    GtkWidget *row_step = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 3);
+    GtkWidget *b_div2 = gtk_button_new_with_label("÷2");
+    GtkWidget *b_sub10 = gtk_button_new_with_label("-10%");
+    GtkWidget *b_add10 = gtk_button_new_with_label("+10%");
+    GtkWidget *b_mul2 = gtk_button_new_with_label("×2");
+    GtkWidget *b_reset = gtk_button_new_with_label(tr(pw->app, "Reset", "Скинути"));
+
+    gtk_style_context_add_class(gtk_widget_get_style_context(b_div2), "quick-step-btn");
+    gtk_style_context_add_class(gtk_widget_get_style_context(b_sub10), "quick-step-btn");
+    gtk_style_context_add_class(gtk_widget_get_style_context(b_add10), "quick-step-btn");
+    gtk_style_context_add_class(gtk_widget_get_style_context(b_mul2), "quick-step-btn");
+    gtk_style_context_add_class(gtk_widget_get_style_context(b_reset), "quick-step-btn");
+
+    g_signal_connect(b_div2, "clicked", G_CALLBACK(on_pop_freq_div2), ctx);
+    g_signal_connect(b_sub10, "clicked", G_CALLBACK(on_pop_freq_sub10), ctx);
+    g_signal_connect(b_add10, "clicked", G_CALLBACK(on_pop_freq_add10), ctx);
+    g_signal_connect(b_mul2, "clicked", G_CALLBACK(on_pop_freq_mul2), ctx);
+    g_signal_connect(b_reset, "clicked", G_CALLBACK(on_pop_freq_reset), ctx);
+
+    gtk_box_pack_start(GTK_BOX(row_step), b_div2, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(row_step), b_sub10, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(row_step), b_add10, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(row_step), b_mul2, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(row_step), b_reset, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(box), row_step, FALSE, FALSE, 2);
+
+    /* Filter Type Row */
+    GtkWidget *row_type = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    GtkWidget *lbl_type = gtk_label_new(tr(pw->app, "Type:", "Тип:"));
+    ctx->combo_type = gtk_combo_box_text_new();
+    gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(ctx->combo_type), "Peak / Bell");
+    gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(ctx->combo_type), "Low Shelf");
+    gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(ctx->combo_type), "High Shelf");
+    gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(ctx->combo_type), "Low Pass");
+    gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(ctx->combo_type), "High Pass");
+    gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(ctx->combo_type), "Notch");
+    gtk_combo_box_set_active(GTK_COMBO_BOX(ctx->combo_type), band->type);
+    g_signal_connect(ctx->combo_type, "changed", G_CALLBACK(on_pop_type_changed), ctx);
+
+    gtk_box_pack_start(GTK_BOX(row_type), lbl_type, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(row_type), ctx->combo_type, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(box), row_type, FALSE, FALSE, 0);
+
+    /* Q Factor & On/Off Row */
+    GtkWidget *row_q = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    GtkWidget *lbl_q = gtk_label_new("Q:");
+    ctx->spin_q = gtk_spin_button_new_with_range(0.1, 20.0, 0.05);
+    gtk_spin_button_set_digits(GTK_SPIN_BUTTON(ctx->spin_q), 2);
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(ctx->spin_q), band->q);
+    g_signal_connect(ctx->spin_q, "value-changed", G_CALLBACK(on_pop_q_changed), ctx);
+
+    ctx->chk_on = gtk_check_button_new_with_label(tr(pw->app, "On", "Увімк"));
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(ctx->chk_on), band->enabled);
+    g_signal_connect(ctx->chk_on, "toggled", G_CALLBACK(on_pop_on_toggled), ctx);
+
+    gtk_box_pack_start(GTK_BOX(row_q), lbl_q, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(row_q), ctx->spin_q, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(row_q), ctx->chk_on, FALSE, FALSE, 4);
+    gtk_box_pack_start(GTK_BOX(box), row_q, FALSE, FALSE, 0);
+
+    gtk_container_add(GTK_CONTAINER(pop), box);
+    gtk_widget_show_all(pop);
+    gtk_popover_popup(GTK_POPOVER(pop));
+}
+
+static gboolean on_eq_db_scroll(GtkWidget *w, GdkEventScroll *ev, gpointer data) {
+    PipelineWin *pw = (PipelineWin *)data;
+    int b = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(w), "band_idx"));
+    if (b < 0 || b >= (int)get_active_eq_num_bands(pw)) return FALSE;
+    EqBandConfig *band = &get_active_eq_bands(pw)[b];
+
+    double delta = 0.0;
+    if (ev->direction == GDK_SCROLL_UP) delta = 0.5;
+    else if (ev->direction == GDK_SCROLL_DOWN) delta = -0.5;
+    else if (ev->direction == GDK_SCROLL_SMOOTH) delta = -ev->delta_y * 0.5;
+
+    float new_gain = band->gain_db + (float)delta;
+    if (new_gain < -24.0f) new_gain = -24.0f;
+    if (new_gain > 24.0f) new_gain = 24.0f;
+    band->gain_db = roundf(new_gain * 10.0f) * 0.1f;
+
+    if (!pw->is_microphone && !pw->app->cfg.sink_eq_split_channels) {
+        pw->app->cfg.sink_eq_right[b] = *band;
+    }
+    pw->selected_eq_band = b;
+
+    update_fader_ui_band(pw, b);
+    update_inspector(pw);
+    push_config_live(pw->app, false);
+    gtk_widget_queue_draw(pw->bode_area);
+    return TRUE;
+}
+
+static gboolean on_eq_freq_scroll(GtkWidget *w, GdkEventScroll *ev, gpointer data) {
+    PipelineWin *pw = (PipelineWin *)data;
+    int b = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(w), "band_idx"));
+    if (b < 0 || b >= (int)get_active_eq_num_bands(pw)) return FALSE;
+    EqBandConfig *band = &get_active_eq_bands(pw)[b];
+
+    float mult = 1.0f;
+    if (ev->direction == GDK_SCROLL_UP) mult = 1.05f;
+    else if (ev->direction == GDK_SCROLL_DOWN) mult = 0.95f;
+    else if (ev->direction == GDK_SCROLL_SMOOTH) mult = (float)pow(1.05, -ev->delta_y);
+
+    float new_freq = band->freq * mult;
+    if (new_freq < 20.0f) new_freq = 20.0f;
+    if (new_freq > 20000.0f) new_freq = 20000.0f;
+    band->freq = roundf(new_freq);
+
+    if (!pw->is_microphone && !pw->app->cfg.sink_eq_split_channels) {
+        pw->app->cfg.sink_eq_right[b] = *band;
+    }
+    pw->selected_eq_band = b;
+
+    update_fader_ui_band(pw, b);
+    update_inspector(pw);
+    push_config_live(pw->app, false);
+    gtk_widget_queue_draw(pw->bode_area);
+    return TRUE;
+}
+
+static gboolean on_eq_fader_scroll(GtkWidget *widget, GdkEventScroll *ev, gpointer data) {
+    return on_eq_db_scroll(widget, ev, data);
+}
+
+static gboolean on_eq_fader_button_press(GtkWidget *widget, GdkEventButton *ev, gpointer data) {
+    PipelineWin *pw = (PipelineWin *)data;
+    int b = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(widget), "band_idx"));
+    if (b >= 0 && b < (int)get_active_eq_num_bands(pw)) {
+        pw->selected_eq_band = b;
+        update_inspector(pw);
+        gtk_widget_queue_draw(pw->bode_area);
+
+        if (ev->button == 3) { /* Right-click -> open frequency & filter menu */
+            if (pw->eq_fader_labels[b]) {
+                on_eq_freq_btn_clicked(GTK_BUTTON(pw->eq_fader_labels[b]), pw);
+                return TRUE;
+            }
+        }
+    }
+    return FALSE;
 }
 
 static void on_eq_fader_changed(GtkRange *range, gpointer data) {
@@ -785,6 +1219,14 @@ static void on_eq_fader_changed(GtkRange *range, gpointer data) {
         pw->app->cfg.sink_eq_right[b] = *band;
     }
     pw->selected_eq_band = b;
+
+    if (pw->eq_fader_db_labels[b]) {
+        char dblbl[24];
+        if (fabsf(band->gain_db) < 0.05f) snprintf(dblbl, sizeof(dblbl), "0.0 dB");
+        else snprintf(dblbl, sizeof(dblbl), "%+.1f dB", band->gain_db);
+        gtk_button_set_label(GTK_BUTTON(pw->eq_fader_db_labels[b]), dblbl);
+    }
+
     update_inspector(pw);
     push_config_live(pw->app, false);
     gtk_widget_queue_draw(pw->bode_area);
@@ -796,6 +1238,7 @@ static void rebuild_faders(PipelineWin *pw) {
     g_list_free(children);
     memset(pw->eq_fader_scales, 0, sizeof(pw->eq_fader_scales));
     memset(pw->eq_fader_labels, 0, sizeof(pw->eq_fader_labels));
+    memset(pw->eq_fader_db_labels, 0, sizeof(pw->eq_fader_db_labels));
 
     const EqBandConfig *bands = get_active_eq_bands(pw);
     uint32_t nb = get_active_eq_num_bands(pw);
@@ -803,28 +1246,60 @@ static void rebuild_faders(PipelineWin *pw) {
     for (uint32_t i = 0; i < nb; ++i) {
         GtkWidget *col = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
         gtk_widget_set_hexpand(col, TRUE);
+        gtk_widget_set_vexpand(col, TRUE);
 
-        GtkWidget *sc = gtk_scale_new_with_range(GTK_ORIENTATION_VERTICAL, -24.0, 24.0, 0.5);
+        /* Gain dB button at top */
+        char dblbl[24];
+        if (fabsf(bands[i].gain_db) < 0.05f) snprintf(dblbl, sizeof(dblbl), "0.0 dB");
+        else snprintf(dblbl, sizeof(dblbl), "%+.1f dB", bands[i].gain_db);
+        GtkWidget *btn_db = gtk_button_new_with_label(dblbl);
+        gtk_style_context_add_class(gtk_widget_get_style_context(btn_db), "fader-btn-db");
+        gtk_widget_set_tooltip_text(btn_db, tr(pw->app,
+            "Click to edit Gain (dB) or scroll mouse wheel",
+            "Клікніть для редагування dB або крутіть колесо миші"));
+        g_object_set_data(G_OBJECT(btn_db), "band_idx", GINT_TO_POINTER((int)i));
+        g_signal_connect(btn_db, "clicked", G_CALLBACK(on_eq_db_btn_clicked), pw);
+        g_signal_connect(btn_db, "scroll-event", G_CALLBACK(on_eq_db_scroll), pw);
+
+        /* Vertical Scale in middle */
+        GtkWidget *sc = gtk_scale_new_with_range(GTK_ORIENTATION_VERTICAL, -24.0, 24.0, 0.25);
         gtk_range_set_inverted(GTK_RANGE(sc), TRUE);
         gtk_scale_set_draw_value(GTK_SCALE(sc), FALSE);
         gtk_scale_add_mark(GTK_SCALE(sc), 0.0, GTK_POS_RIGHT, NULL);
-        gtk_widget_set_size_request(sc, 24, 108);
+        gtk_widget_set_size_request(sc, 28, 120);
         gtk_widget_set_vexpand(sc, TRUE);
+        gtk_widget_set_hexpand(sc, TRUE);
         gtk_range_set_value(GTK_RANGE(sc), bands[i].gain_db);
         g_object_set_data(G_OBJECT(sc), "band_idx", GINT_TO_POINTER((int)i));
         g_signal_connect(sc, "value-changed", G_CALLBACK(on_eq_fader_changed), pw);
+        g_signal_connect(sc, "scroll-event", G_CALLBACK(on_eq_fader_scroll), pw);
+        g_signal_connect(sc, "button-press-event", G_CALLBACK(on_eq_fader_button_press), pw);
 
-        char flbl[16];
+        /* Frequency button at bottom */
+        char flbl[24];
         format_freq_short(bands[i].freq, flbl, sizeof(flbl));
-        GtkWidget *lbl = gtk_label_new(flbl);
-        gtk_style_context_add_class(gtk_widget_get_style_context(lbl), "band-val");
+        GtkWidget *btn_freq = gtk_button_new_with_label(flbl);
+        gtk_style_context_add_class(gtk_widget_get_style_context(btn_freq), "fader-btn-freq");
+        gtk_widget_set_tooltip_text(btn_freq, tr(pw->app,
+            "Click to edit Frequency & Filter or scroll mouse wheel",
+            "Клікніть для редагування частоти / фільтра або крутіть колесо миші"));
+        g_object_set_data(G_OBJECT(btn_freq), "band_idx", GINT_TO_POINTER((int)i));
+        g_signal_connect(btn_freq, "clicked", G_CALLBACK(on_eq_freq_btn_clicked), pw);
+        g_signal_connect(btn_freq, "scroll-event", G_CALLBACK(on_eq_freq_scroll), pw);
 
+        if ((int)i == pw->selected_eq_band) {
+            gtk_style_context_add_class(gtk_widget_get_style_context(btn_freq), "selected");
+            gtk_style_context_add_class(gtk_widget_get_style_context(btn_db), "selected");
+        }
+
+        gtk_box_pack_start(GTK_BOX(col), btn_db, FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(col), sc, TRUE, TRUE, 0);
-        gtk_box_pack_start(GTK_BOX(col), lbl, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(col), btn_freq, FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(pw->eq_faders_box), col, TRUE, TRUE, 0);
 
         pw->eq_fader_scales[i] = sc;
-        pw->eq_fader_labels[i] = lbl;
+        pw->eq_fader_labels[i] = btn_freq;
+        pw->eq_fader_db_labels[i] = btn_db;
     }
     gtk_widget_show_all(pw->eq_faders_box);
 }
@@ -3027,15 +3502,19 @@ static GtkWidget *build_pipeline_window(PipelineWin *pw, bool is_mic) {
 
     GtkWidget *fscroll = gtk_scrolled_window_new(NULL, NULL);
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(fscroll), GTK_POLICY_AUTOMATIC, GTK_POLICY_NEVER);
-    gtk_widget_set_size_request(fscroll, -1, 138);
+    gtk_widget_set_size_request(fscroll, -1, 180);
+    gtk_widget_set_vexpand(fscroll, TRUE);
+    gtk_widget_set_hexpand(fscroll, TRUE);
     pw->eq_faders_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+    gtk_widget_set_vexpand(pw->eq_faders_box, TRUE);
+    gtk_widget_set_hexpand(pw->eq_faders_box, TRUE);
     gtk_style_context_add_class(gtk_widget_get_style_context(pw->eq_faders_box), "card");
     gtk_container_add(GTK_CONTAINER(fscroll), pw->eq_faders_box);
 
     gtk_box_pack_start(GTK_BOX(eq_box), eq_hbar, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(eq_box), pw->bode_area, TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(eq_box), insp, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(eq_box), fscroll, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(eq_box), fscroll, TRUE, TRUE, 0);
 
     /* Tab 2: Crystalizer */
     GtkWidget *cr_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);

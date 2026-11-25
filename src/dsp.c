@@ -655,10 +655,14 @@ void dsp_engine_process_ex(DspEngine *eng,
             xr *= cur_comp;
         }
 
-        if (limit_on) {
+        if (limit_on || fabsf(xl) > 0.98f) {
             xl = soft_limit_sample(xl);
+        }
+        if (limit_on || fabsf(xr) > 0.98f) {
             xr = soft_limit_sample(xr);
         }
+        if (xl > 1.0f) xl = 1.0f; else if (xl < -1.0f) xl = -1.0f;
+        if (xr > 1.0f) xr = 1.0f; else if (xr < -1.0f) xr = -1.0f;
         if (measure_peaks) {
             float al = fabsf(xl), ar = fabsf(xr);
             if (al > pout_l) pout_l = al;
