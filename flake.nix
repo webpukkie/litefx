@@ -18,7 +18,7 @@
         {
           default = pkgs.stdenv.mkDerivation {
             pname = "litefx";
-            version = "0.3.1";
+            version = "0.4";
             src = ./.;
 
             nativeBuildInputs = with pkgs; [
